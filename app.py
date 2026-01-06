@@ -2,11 +2,23 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import font_manager, rc
 from scipy import linalg
 import io
 import warnings
 
 warnings.filterwarnings("ignore")
+
+# =============================
+# 0. 한글 폰트 설정 (중요)
+# =============================
+# Windows: Malgun Gothic, Mac: AppleGothic, Linux: NanumGothic 등 환경에 맞게 수정
+try:
+    plt.rcParams["font.family"] = "Malgun Gothic"   # 한글 폰트
+except Exception:
+    # 폰트가 없을 경우 기본 폰트 사용 (그래도 코드가 죽지 않도록)
+    pass
+plt.rcParams["axes.unicode_minus"] = False  # 음수 부호 깨짐 방지
 
 st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
 
@@ -67,35 +79,24 @@ def correct_matrix(matrix, threshold=0.1, max_iter=20, alpha=0.3):
     """
     CR 임계값(threshold)을 만족하는 수준까지만
     '최소한으로' 보정하는 함수.
-
-    - matrix : 초기 쌍대비교 행렬 (응답 반영)
-    - threshold : 허용 CR
-    - max_iter : 최대 보정 횟수 (작을수록 응답 보존)
-    - alpha : 스무딩 강도 (0~1, 작을수록 응답 보존)
     """
     mat = matrix.astype(float).copy()
-
-    # 초기 CR 계산
     w, lam, CI, CR = ahp_weights(mat)
     orig_CR = CR
     it = 0
 
-    # 이미 threshold 이하면 그대로 반환
     if CR <= threshold:
         return mat, orig_CR, CR, it
 
     n = mat.shape[0]
 
     while CR > threshold and it < max_iter:
-        # 1) 현재 가중치 기반 이론적 쌍대비교 비율 계산
         w, _, _, _ = ahp_weights(mat)
         ideal = np.ones_like(mat)
         for i in range(n):
             for j in range(n):
                 ideal[i, j] = w[i] / w[j]
 
-        # 2) 실제 응답(mat) ↔ 이론적 비율(ideal)을 alpha 비율로만 섞어서
-        #    응답값을 최대한 보존하면서 점진적으로 일관성 개선
         for i in range(n):
             for j in range(i + 1, n):
                 a_ij = mat[i, j]
@@ -113,11 +114,8 @@ def correct_matrix(matrix, threshold=0.1, max_iter=20, alpha=0.3):
                 mat[i, j] = new_ij
                 mat[j, i] = 1.0 / new_ij
 
-        # 3) 새 CR 계산
         _, _, _, CR = ahp_weights(mat)
         it += 1
-
-        # threshold 를 만족하면 즉시 종료
         if CR <= threshold:
             break
 
@@ -176,10 +174,7 @@ def defuzzify_tfn_array(Si, method="geometric"):
 # 4. 개선된 Chang Extent Fuzzy AHP
 # -----------------------------
 def degree_of_possibility(si, sj):
-    """
-    V(Si >= Sj) 계산.
-    si = (l1, m1, u1), sj = (l2, m2, u2)
-    """
+    """V(Si >= Sj) 계산."""
     l1, m1, u1 = si
     l2, m2, u2 = sj
 
@@ -193,10 +188,6 @@ def degree_of_possibility(si, sj):
 def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
     """
     개선된 Fuzzy AHP (Chang + d_i 곱 방식).
-    - Si: fuzzy synthetic extent
-    - d: 각 요인의 가능성 기반 값 (곱)
-    - w_fuzzy: d 정규화 (최종 Fuzzy 가중치)
-    - crisp_S: Si 비퍼지화 값 (참고용)
     """
     n = matrix.shape[0]
 
@@ -243,7 +234,7 @@ def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
             else:
                 V[i, j] = degree_of_possibility(tuple(Si[i]), tuple(Si[j]))
 
-    # 6) 개선된 d_i: 다른 모든 요인에 대한 V의 곱
+    # 6) d_i: V 값 곱
     d = np.ones(n)
     for i in range(n):
         for j in range(n):
@@ -504,7 +495,7 @@ if st.button("🚀 분석 시작", type="primary"):
             ax.set_ylabel("Membership degree")
             ax.set_title("Fuzzy Membership Functions")
             ax.grid(True, alpha=0.3)
-            ax.legend()
+            ax.legend()  # 여기에서 한글 라벨이 깨지지 않도록 폰트 설정 완료
             st.pyplot(fig)
 
             fig2, ax2 = plt.subplots(figsize=(8, 4))
