@@ -2,24 +2,38 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import rcParams
+from matplotlib import font_manager, rcParams
 from scipy import linalg
 import io
 import warnings
 
 warnings.filterwarnings("ignore")
 
-# =============================
-# 0. 한글 폰트 설정 (Windows: 맑은 고딕)
-# =============================
-try:
-    rcParams["font.family"] = "Malgun Gothic"  # 윈도우 기본 한글 폰트
-except Exception:
-    # 폰트 설정 실패하더라도 앱이 죽지 않도록
-    pass
-rcParams["axes.unicode_minus"] = False  # 음수 기호 깨짐 방지
-
 st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
+
+# -----------------------------
+# 0. 그래프용 한글 폰트 도우미
+# -----------------------------
+def enable_korean_for_axes(ax):
+    """
+    이 함수가 호출된 축(ax)에 한글 폰트를 적용.
+    - Windows 에서는 'Malgun Gothic' 사용.
+    - 폰트가 없으면 기본 폰트 그대로 사용.
+    """
+    try:
+        for label in (ax.get_xticklabels() + ax.get_yticklabels()):
+            label.set_fontfamily("Malgun Gothic")
+        ax.title.set_fontfamily("Malgun Gothic")
+        ax.xaxis.label.set_fontfamily("Malgun Gothic")
+        ax.yaxis.label.set_fontfamily("Malgun Gothic")
+        leg = ax.get_legend()
+        if leg is not None:
+            for text in leg.get_texts():
+                text.set_fontfamily("Malgun Gothic")
+    except Exception:
+        # 폰트가 없더라도 앱이 죽지 않도록 무시
+        pass
+    rcParams["axes.unicode_minus"] = False
 
 # -----------------------------
 # 1. 기본 상수
@@ -482,6 +496,7 @@ if st.button("🚀 분석 시작", type="primary"):
             st.markdown(f"#### 그룹: {g}")
             Si = r["Si"]
 
+            # (1) Fuzzy Membership Functions
             fig, ax = plt.subplots(figsize=(10, 5))
             colors = plt.cm.Set3(np.linspace(0, 1, len(labels)))
             for i, lab in enumerate(labels):
@@ -491,9 +506,11 @@ if st.button("🚀 분석 시작", type="primary"):
             ax.set_ylabel("Membership degree")
             ax.set_title("Fuzzy Membership Functions")
             ax.grid(True, alpha=0.3)
-            ax.legend()   # 범례에 요인1~4 한글 출력 (윈도우 + 맑은 고딕)
+            ax.legend()
+            enable_korean_for_axes(ax)   # ➜ 그래프에만 한글 폰트 적용
             st.pyplot(fig)
 
+            # (2) AHP vs Fuzzy 비교 막대그래프
             fig2, ax2 = plt.subplots(figsize=(8, 4))
             x = np.arange(len(labels))
             w1 = r["ahp_w"]
@@ -506,4 +523,5 @@ if st.button("🚀 분석 시작", type="primary"):
             ax2.set_title("AHP vs Fuzzy AHP Weights")
             ax2.grid(True, axis="y", alpha=0.3)
             ax2.legend()
+            enable_korean_for_axes(ax2)  # ➜ 이 그래프에도 한글 폰트 적용
             st.pyplot(fig2)
