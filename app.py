@@ -37,12 +37,20 @@ def convert_punch_to_matrix(punch_data, n_factors):
         for j in range(i + 1, n_factors):
             value = punch_data[idx]
             if value < 0:
-                matrix[i][j] = 1 / abs(value) if abs(value) > 1 else 1
-                matrix[j][i] = abs(value) if abs(value) > 1 else 1
+                # 음수: 좌측이 더 중요
+                abs_val = abs(value)
+                if abs_val > 1:
+                    matrix[i][j] = 1 / abs_val
+                    matrix[j][i] = abs_val
+                else:
+                    matrix[i][j] = 1
+                    matrix[j][i] = 1
             elif value > 1:
+                # 양수: 우측이 더 중요
                 matrix[i][j] = value
                 matrix[j][i] = 1 / value
             else:
+                # 1: 동등
                 matrix[i][j] = 1
                 matrix[j][i] = 1
             idx += 1
@@ -55,13 +63,14 @@ def calculate_ahp_weights(matrix):
     max_eigenvalue = max(eigenvalues.real)
     max_index = list(eigenvalues.real).index(max_eigenvalue)
     weights = eigenvectors[:, max_index].real
+    weights = np.abs(weights)  # 음수 방지
     weights = weights / weights.sum()
 
     # CR 계산
     CI = (max_eigenvalue - n) / (n - 1) if n > 1 else 0
     CR = CI / RI.get(n, 1.49) if n > 2 else 0
 
-    return weights, max_eigenvalue, CI, CR
+    return weights, max_eigenvalue.real, CI.real, CR.real
 
 def correct_matrix(matrix, max_iterations=10, threshold=0.1):
     """CR 보정 프로세스"""
@@ -73,12 +82,12 @@ def correct_matrix(matrix, max_iterations=10, threshold=0.1):
     original_cr = CR
 
     while CR > threshold and iterations < max_iterations:
-        # 기하평균 기반 보정
         for i in range(n):
             for j in range(i + 1, n):
+                # 대칭성 강제
                 geometric_mean = np.sqrt(corrected[i][j] * corrected[j][i])
                 corrected[i][j] = geometric_mean
-                corrected[j][i] = 1 / geometric_mean
+                corrected[j][i] = 1 / geometric_mean if geometric_mean > 0 else 1
 
         _, _, _, CR = calculate_ahp_weights(corrected)
         iterations += 1
@@ -87,7 +96,9 @@ def correct_matrix(matrix, max_iterations=10, threshold=0.1):
 
 def saaty_to_fuzzy(value):
     """Saaty 척도를 삼각퍼지수로 변환"""
-    rounded = round(value)
+    if value <= 0:
+        value = 1
+    rounded = int(round(value))
     if rounded < 1:
         rounded = 1
     elif rounded > 9:
@@ -97,7 +108,22 @@ def saaty_to_fuzzy(value):
 def fuzzy_inverse(fuzzy_num):
     """삼각퍼지수의 역수 계산"""
     l, m, u = fuzzy_num
-    return (1/u, 1/m, 1/l)
+    if l > 0 and m > 0 and u > 0:
+        return (1/u, 1/m, 1/l)
+    else:
+        return (1, 1, 1)
+
+def fuzzy_multiply(f1, f2):
+    """두 삼각퍼지수의 곱셈"""
+    l1, m1, u1 = f1
+    l2, m2, u2 = f2
+    return (l1*l2, m1*m2, u1*u2)
+
+def fuzzy_add(f1, f2):
+    """두 삼각퍼지수의 덧셈"""
+    l1, m1, u1 = f1
+    l2, m2, u2 = f2
+    return (l1+l2, m1+m2, u1+u2)
 
 def defuzzify(fuzzy_values, method='weighted'):
     """비퍼지화 - 삼각퍼지수를 crisp 값으로 변환"""
@@ -105,70 +131,87 @@ def defuzzify(fuzzy_values, method='weighted'):
     for tfn in fuzzy_values:
         l, m, u = tfn
         if method == 'weighted':
-            # 가중평균: (l + 2m + u) / 4
             crisp = (l + 2*m + u) / 4
         elif method == 'arithmetic':
-            # 산술평균: (l + m + u) / 3
             crisp = (l + m + u) / 3
         elif method == 'geometric':
-            # 기하평균: (l * m * u)^(1/3)
-            crisp = (l * m * u) ** (1/3)
+            if l > 0 and m > 0 and u > 0:
+                crisp = (l * m * u) ** (1/3)
+            else:
+                crisp = 0
         else:
-            crisp = m  # 기본값: 중간값
+            crisp = m
         crisp_values.append(crisp)
 
     crisp_values = np.array(crisp_values)
-    return crisp_values / crisp_values.sum()
+    total = crisp_values.sum()
+    if total > 0:
+        return crisp_values / total
+    else:
+        return crisp_values
 
 def fuzzy_ahp_changs_method(matrix, defuzzy_method='weighted'):
-    """Chang's Extent Analysis Method로 Fuzzy AHP 분석"""
+    """
+    Chang's Extent Analysis Method로 Fuzzy AHP 분석
+    완전히 재작성된 정확한 구현
+    """
     n = len(matrix)
 
-    # 삼각퍼지수 행렬 생성
+    # Step 1: 삼각퍼지수 행렬 생성
     fuzzy_matrix = []
     for i in range(n):
-        fuzzy_row = []
+        row = []
         for j in range(n):
             if i == j:
-                fuzzy_row.append((1, 1, 1))
-            elif i < j:
-                # 상삼각: 원본 값
-                tfn = saaty_to_fuzzy(matrix[i][j])
-                fuzzy_row.append(tfn)
+                row.append((1.0, 1.0, 1.0))
             else:
-                # 하삼각: 역수
-                tfn = saaty_to_fuzzy(matrix[j][i])
-                fuzzy_row.append(fuzzy_inverse(tfn))
-        fuzzy_matrix.append(fuzzy_row)
+                # 원본 행렬 값을 삼각퍼지수로 변환
+                value = matrix[i][j]
+                if value >= 1:
+                    tfn = saaty_to_fuzzy(value)
+                else:
+                    # 1보다 작으면 역수의 퍼지수를 역변환
+                    inv_value = 1 / value if value > 0 else 1
+                    inv_tfn = saaty_to_fuzzy(inv_value)
+                    tfn = fuzzy_inverse(inv_tfn)
+                row.append(tfn)
+        fuzzy_matrix.append(row)
 
-    fuzzy_matrix = np.array(fuzzy_matrix)
-
-    # Step 1: 각 행의 퍼지 합계 계산
-    row_sums = []
+    # Step 2: 각 행의 퍼지 합 계산
+    fuzzy_row_sums = []
     for i in range(n):
-        l_sum = sum(fuzzy_matrix[i, j][0] for j in range(n))
-        m_sum = sum(fuzzy_matrix[i, j][1] for j in range(n))
-        u_sum = sum(fuzzy_matrix[i, j][2] for j in range(n))
-        row_sums.append((l_sum, m_sum, u_sum))
+        row_sum = (0.0, 0.0, 0.0)
+        for j in range(n):
+            row_sum = fuzzy_add(row_sum, fuzzy_matrix[i][j])
+        fuzzy_row_sums.append(row_sum)
 
-    # Step 2: 전체 행렬의 퍼지 합계 계산
-    total_l = sum(row_sums[i][0] for i in range(n))
-    total_m = sum(row_sums[i][1] for i in range(n))
-    total_u = sum(row_sums[i][2] for i in range(n))
+    # Step 3: 전체 행렬의 퍼지 합 계산
+    total_fuzzy_sum = (0.0, 0.0, 0.0)
+    for row_sum in fuzzy_row_sums:
+        total_fuzzy_sum = fuzzy_add(total_fuzzy_sum, row_sum)
 
-    # Step 3: Si 계산 (각 행 합계 / 전체 합계의 역수)
+    # Step 4: Si 계산 = 각 행 합 / 전체 합의 역수
     Si = []
+    total_l, total_m, total_u = total_fuzzy_sum
+
     for i in range(n):
-        si_l = row_sums[i][0] / total_u
-        si_m = row_sums[i][1] / total_m
-        si_u = row_sums[i][2] / total_l
+        row_l, row_m, row_u = fuzzy_row_sums[i]
+
+        # Si = 행합 × (1/전체합)
+        if total_l > 0 and total_m > 0 and total_u > 0:
+            si_l = row_l / total_u  # 주의: 역수 관계
+            si_m = row_m / total_m
+            si_u = row_u / total_l
+        else:
+            si_l, si_m, si_u = 0, 0, 0
+
         Si.append((si_l, si_m, si_u))
 
     Si = np.array(Si)
 
-    # Step 4: V(Si >= Sj) 계산 (퍼지수 비교)
-    def fuzzy_comparison(si, sj):
-        """V(Si >= Sj) 계산"""
+    # Step 5: V(Si >= Sj) 계산
+    def degree_of_possibility(si, sj):
+        """V(Si >= Sj) - 퍼지수 Si가 Sj보다 큰 정도"""
         l1, m1, u1 = si
         l2, m2, u2 = sj
 
@@ -179,24 +222,32 @@ def fuzzy_ahp_changs_method(matrix, defuzzy_method='weighted'):
         else:
             numerator = u2 - l1
             denominator = (m1 - u1) + (u2 - m2)
-            return numerator / denominator if denominator != 0 else 0.0
+            if denominator != 0:
+                return max(0.0, min(1.0, numerator / denominator))
+            else:
+                return 0.0
 
-    # Step 5: d'(Ai) 계산 - min(V(Si >= Sj)) for all j != i
-    d_prime = []
+    # Step 6: 각 요인의 우선순위 벡터 계산
+    priority_vector = []
     for i in range(n):
-        min_val = 1.0
+        # V(Si >= S1, S2, ..., Sn) = min(V(Si >= Sj)) for all j != i
+        min_degree = 1.0
         for j in range(n):
             if i != j:
-                v_val = fuzzy_comparison(Si[i], Si[j])
-                min_val = min(min_val, v_val)
-        d_prime.append(min_val)
+                degree = degree_of_possibility(Si[i], Si[j])
+                min_degree = min(min_degree, degree)
+        priority_vector.append(min_degree)
 
-    d_prime = np.array(d_prime)
+    priority_vector = np.array(priority_vector)
 
-    # Step 6: 정규화하여 최종 가중치 계산
-    weights_norm = d_prime / d_prime.sum() if d_prime.sum() > 0 else d_prime
+    # Step 7: 정규화
+    total_priority = priority_vector.sum()
+    if total_priority > 0:
+        weights_norm = priority_vector / total_priority
+    else:
+        weights_norm = np.ones(n) / n
 
-    # Crisp 값 계산 (비퍼지화) - 선택한 방법 적용
+    # Step 8: Crisp 값 계산 (비퍼지화)
     crisp_norm = defuzzify(Si, method=defuzzy_method)
 
     return Si, weights_norm, crisp_norm
@@ -209,8 +260,11 @@ def geometric_mean_matrix(matrices):
     result = np.ones((n, n))
     for i in range(n):
         for j in range(n):
-            values = [m[i][j] for m in matrices]
-            result[i][j] = np.prod(values) ** (1 / len(values))
+            values = [m[i][j] for m in matrices if m[i][j] > 0]
+            if len(values) > 0:
+                result[i][j] = np.prod(values) ** (1 / len(values))
+            else:
+                result[i][j] = 1
     return result
 
 # 메인 UI
@@ -226,7 +280,6 @@ with st.sidebar:
         ["가중평균 (l+2m+u)/4", "산술평균 (l+m+u)/3", "기하평균 (l×m×u)^(1/3)"]
     )
 
-    # 내부 메서드명 매핑
     defuzzy_method_map = {
         "가중평균 (l+2m+u)/4": "weighted",
         "산술평균 (l+m+u)/3": "arithmetic",
@@ -276,25 +329,19 @@ uploaded_file = st.file_uploader("Excel 파일을 업로드하세요", type=['xl
 
 if uploaded_file:
     try:
-        # 데이터 읽기
         df = pd.read_excel(uploaded_file)
-
         st.success(f"✅ 파일 업로드 성공: {len(df)}개 응답")
 
-        # 데이터 미리보기
         with st.expander("📋 업로드된 데이터 미리보기"):
             st.dataframe(df.head(10))
 
-        # 데이터 파싱
         id_col = df.columns[0]
         type_col = df.columns[1]
         comparison_cols = df.columns[2:]
 
-        # 요인 수 계산
         n_comparisons = len(comparison_cols)
         n_factors = int((1 + np.sqrt(1 + 8 * n_comparisons)) / 2)
 
-        # 요인 레이블 추출
         factor_labels = []
         for col in comparison_cols:
             parts = col.split(' vs ')
@@ -309,27 +356,21 @@ if uploaded_file:
 
         st.info(f"🔍 자동 인식: {n_factors}개 요인, {n_comparisons}개 쌍대비교")
 
-        # 그룹 분석 여부 확인
         has_groups = df[type_col].notna().any()
         if has_groups:
             groups = df[type_col].dropna().unique()
-            st.info(f"👥 그룹 분석 모드: {len(groups)}개 그룹 감지 ({', '.join(map(str, groups))})")
+            st.info(f"👥 그룹 분석 모드: {len(groups)}개 그룹 ({', '.join(map(str, groups))})")
         else:
             st.info("👥 전체 그룹 분석 모드")
 
-        # 분석 시작 버튼
         if st.button("🚀 분석 시작", type="primary"):
             with st.spinner("분석 진행 중..."):
-
-                # 진행률 표시
                 progress_bar = st.progress(0)
                 status_text = st.empty()
 
-                # 결과 저장 변수
                 all_results = {}
                 consistency_data = []
 
-                # 그룹별 분석
                 if has_groups:
                     for group_idx, group in enumerate(groups):
                         group_df = df[df[type_col] == group]
@@ -351,7 +392,6 @@ if uploaded_file:
 
                             group_matrices.append(corrected)
 
-                        # 그룹 통합 행렬 (기하평균)
                         group_matrix = geometric_mean_matrix(group_matrices)
                         ahp_weights, lambda_max, CI, CR = calculate_ahp_weights(group_matrix)
                         fuzzy_si, fuzzy_weights, fuzzy_crisp = fuzzy_ahp_changs_method(group_matrix, defuzzy_method)
@@ -372,7 +412,6 @@ if uploaded_file:
                         status_text.text(f"처리 중: 그룹 {group_idx + 1}/{len(groups)}")
 
                 else:
-                    # 전체 그룹 분석
                     all_matrices = []
 
                     for idx, row in df.iterrows():
@@ -394,7 +433,6 @@ if uploaded_file:
                         progress_bar.progress(progress)
                         status_text.text(f"처리 중: {idx + 1}/{len(df)} 응답자")
 
-                    # 전체 통합 행렬
                     combined_matrix = geometric_mean_matrix(all_matrices)
                     ahp_weights, lambda_max, CI, CR = calculate_ahp_weights(combined_matrix)
                     fuzzy_si, fuzzy_weights, fuzzy_crisp = fuzzy_ahp_changs_method(combined_matrix, defuzzy_method)
@@ -418,13 +456,11 @@ if uploaded_file:
                 # 결과 표시
                 tabs = st.tabs(["📊 일관성 검증", "🔢 AHP 행렬", "⚖️ 비교 분석", "🔺 Fuzzy 상세", "📈 시각화"])
 
-                # 탭 1: 일관성 검증
                 with tabs[0]:
                     st.markdown("### 응답자별 일관성 정보")
                     consistency_df = pd.DataFrame(consistency_data)
                     st.dataframe(consistency_df, use_container_width=True)
 
-                    # 요약 통계
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.metric("총 응답자 수", len(consistency_df))
@@ -435,19 +471,16 @@ if uploaded_file:
                         avg_cr = consistency_df['보정 후 CR'].mean()
                         st.metric("평균 CR", f"{avg_cr:.4f}")
 
-                # 탭 2: AHP 행렬
                 with tabs[1]:
                     for group_name, result in all_results.items():
                         st.markdown(f"### {'전체 그룹' if group_name == 'All' else f'그룹: {group_name}'}")
 
-                        # 쌍대비교 행렬
                         matrix_df = pd.DataFrame(result['matrix'], 
                                                 columns=factor_labels, 
                                                 index=factor_labels)
                         st.write("**쌍대비교 행렬**")
                         st.dataframe(matrix_df.style.format("{:.4f}"), use_container_width=True)
 
-                        # 가중치
                         col1, col2, col3, col4 = st.columns(4)
                         with col1:
                             st.metric("λmax", f"{result['lambda_max']:.4f}")
@@ -461,12 +494,10 @@ if uploaded_file:
 
                         st.markdown("---")
 
-                # 탭 3: 비교 분석
                 with tabs[2]:
                     for group_name, result in all_results.items():
                         st.markdown(f"### {'전체 그룹' if group_name == 'All' else f'그룹: {group_name}'}")
 
-                        # AHP vs Fuzzy AHP 비교표
                         ahp_ranks = pd.Series(result['ahp_weights']).rank(ascending=False, method='min').astype(int)
                         fuzzy_ranks = pd.Series(result['fuzzy_weights']).rank(ascending=False, method='min').astype(int)
                         rank_change = fuzzy_ranks - ahp_ranks
@@ -487,11 +518,9 @@ if uploaded_file:
 
                         st.markdown("---")
 
-                # 탭 4: Fuzzy 상세
                 with tabs[3]:
                     for group_name, result in all_results.items():
                         st.markdown(f"### {'전체 그룹' if group_name == 'All' else f'그룹: {group_name}'}")
-
                         st.info(f"📌 비퍼지화 방법: {defuzzy_method_display}")
 
                         fuzzy_detail_df = pd.DataFrame({
@@ -514,15 +543,13 @@ if uploaded_file:
 
                         st.markdown("---")
 
-                # 탭 5: 시각화
                 with tabs[4]:
                     for group_name, result in all_results.items():
                         st.markdown(f"### {'전체 그룹' if group_name == 'All' else f'그룹: {group_name}'}")
 
-                        # Fuzzy Membership Functions 그래프
                         fig, ax = plt.subplots(figsize=(12, 6))
-
                         colors = plt.cm.Set3(np.linspace(0, 1, len(factor_labels)))
+
                         for i, label in enumerate(factor_labels):
                             lower, medium, upper = result['fuzzy_si'][i]
                             ax.plot([lower, medium, upper], [0, 1, 0], 
@@ -539,7 +566,6 @@ if uploaded_file:
                         st.pyplot(fig)
                         plt.close()
 
-                        # 가중치 비교 바 차트
                         fig, ax = plt.subplots(figsize=(10, 6))
                         x = np.arange(len(factor_labels))
                         width = 0.35
@@ -557,7 +583,6 @@ if uploaded_file:
                         ax.legend(fontsize=11)
                         ax.grid(True, axis='y', alpha=0.3, linestyle='--')
 
-                        # 값 라벨 추가
                         for bars in [bars1, bars2]:
                             for bar in bars:
                                 height = bar.get_height()
@@ -572,27 +597,20 @@ if uploaded_file:
                 # Excel 다운로드
                 st.markdown("### 📥 결과 다운로드")
 
-                # Excel 파일 생성
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    # 시트 1: 원본 데이터
                     df.to_excel(writer, sheet_name='Raw Data', index=False)
-
-                    # 시트 2: 일관성 정보
                     consistency_df.to_excel(writer, sheet_name='Consistency', index=False)
 
-                    # 시트 3-N: 그룹별 결과
                     for group_name, result in all_results.items():
                         sheet_name = 'All' if group_name == 'All' else f'Group_{group_name}'
-                        sheet_name = sheet_name[:31]  # Excel 시트명 길이 제한
+                        sheet_name = sheet_name[:31]
 
-                        # AHP 행렬
                         matrix_df = pd.DataFrame(result['matrix'], 
                                                 columns=factor_labels, 
                                                 index=factor_labels)
                         matrix_df.to_excel(writer, sheet_name=f'{sheet_name}_Matrix'[:31])
 
-                        # 비교표
                         ahp_ranks = pd.Series(result['ahp_weights']).rank(ascending=False, method='min').astype(int)
                         fuzzy_ranks = pd.Series(result['fuzzy_weights']).rank(ascending=False, method='min').astype(int)
 
@@ -605,7 +623,6 @@ if uploaded_file:
                         })
                         comparison_df.to_excel(writer, sheet_name=f'{sheet_name}_Compare'[:31], index=False)
 
-                        # Fuzzy 상세
                         fuzzy_detail_df = pd.DataFrame({
                             '구분': factor_labels,
                             'Fuzzy (Lower)': result['fuzzy_si'][:, 0],
@@ -627,52 +644,26 @@ if uploaded_file:
         st.error(f"❌ 오류 발생: {str(e)}")
         import traceback
         st.code(traceback.format_exc())
-        st.info("데이터 형식을 확인해주세요. 샘플 데이터를 참고하세요.")
 
 else:
     st.info("👆 Excel 파일을 업로드하여 분석을 시작하세요.")
 
-    # 사용 가이드
     with st.expander("📚 상세 사용 가이드"):
         st.markdown("""
         ### 데이터 형식 요구사항
 
         #### Excel 파일 구조
-        - **1열**: 응답자 ID (예: 1, 2, 3, ...)
-        - **2열**: 그룹 타입 (선택사항, 비어있으면 전체 분석)
+        - **1열**: 응답자 ID
+        - **2열**: 그룹 타입 (선택사항)
         - **3열 이후**: 쌍대비교 펀칭 데이터
 
-        #### 쌍대비교 펀칭 규칙
-        - **1**: 동등한 중요도
-        - **음수 (-1~-9)**: 좌측 요인이 더 중요
-        - **양수 (1~9)**: 우측 요인이 더 중요
-        - 예시: "요인A vs 요인B" 컬럼에 -5 입력 → A가 B보다 강하게 중요
+        #### 펀칭 규칙
+        - **1**: 동등
+        - **음수 (-1~-9)**: 좌측이 더 중요
+        - **양수 (1~9)**: 우측이 더 중요
 
-        #### 요인 수와 쌍대비교 수
-        - 4개 요인 → 6개 쌍대비교 (4×3/2)
-        - 5개 요인 → 10개 쌍대비교 (5×4/2)
-        - 6개 요인 → 15개 쌍대비교 (6×5/2)
-
-        ### 분석 방법론
-
-        #### 일반 AHP
-        - 고유벡터 방법으로 가중치 계산
-        - CR(Consistency Ratio) ≤ 0.1 기준
-        - 자동 CR 보정 (최대 10회)
-
-        #### Fuzzy AHP (Chang's Method)
+        ### Fuzzy AHP (Chang's Method)
         - 삼각퍼지수(TFN) 변환
-        - Extent Analysis로 퍼지 종합값 계산
-        - 3가지 비퍼지화 방법 지원:
-          1. **가중평균**: (l + 2m + u) / 4
-          2. **산술평균**: (l + m + u) / 3
-          3. **기하평균**: (l × m × u)^(1/3)
-
-        ### 출력 결과
-
-        1. **일관성 검증**: 응답자별 CR 값 및 보정 정보
-        2. **AHP 행렬**: 통합 쌍대비교 행렬 및 가중치
-        3. **비교 분석**: AHP와 Fuzzy AHP 순위 비교
-        4. **Fuzzy 상세**: 삼각퍼지수 상세 값
-        5. **시각화**: Membership Functions 및 가중치 비교 차트
+        - Extent Analysis 계산
+        - 3가지 비퍼지화 방법 지원
         """)
