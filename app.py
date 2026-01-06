@@ -63,23 +63,64 @@ def ahp_weights(matrix):
     return w, lam_max, CI, CR
 
 
-def correct_matrix(matrix, threshold=0.1, max_iter=10):
-    """CR이 threshold 이하가 되도록 간단 보정."""
-    mat = matrix.copy()
-    _, _, _, CR = ahp_weights(mat)
+def correct_matrix(matrix, threshold=0.1, max_iter=20, alpha=0.3):
+    """
+    CR 임계값(threshold)을 만족하는 수준까지만
+    '최소한으로' 보정하는 함수.
+
+    - matrix : 초기 쌍대비교 행렬 (응답 반영)
+    - threshold : 허용 CR
+    - max_iter : 최대 보정 횟수 (작을수록 응답 보존)
+    - alpha : 스무딩 강도 (0~1, 작을수록 응답 보존)
+    """
+    mat = matrix.astype(float).copy()
+
+    # 초기 CR 계산
+    w, lam, CI, CR = ahp_weights(mat)
     orig_CR = CR
     it = 0
+
+    # 이미 threshold 이하면 그대로 반환
+    if CR <= threshold:
+        return mat, orig_CR, CR, it
+
+    n = mat.shape[0]
+
     while CR > threshold and it < max_iter:
-        n = mat.shape[0]
+        # 1) 현재 가중치 기반 이론적 쌍대비교 비율 계산
+        w, _, _, _ = ahp_weights(mat)
+        ideal = np.ones_like(mat)
+        for i in range(n):
+            for j in range(n):
+                ideal[i, j] = w[i] / w[j]
+
+        # 2) 실제 응답(mat) ↔ 이론적 비율(ideal)을 alpha 비율로만 섞어서
+        #    응답값을 최대한 보존하면서 점진적으로 일관성 개선
         for i in range(n):
             for j in range(i + 1, n):
-                g = np.sqrt(mat[i, j] * mat[j, i])
-                if g <= 0:
-                    g = 1
-                mat[i, j] = g
-                mat[j, i] = 1 / g
+                a_ij = mat[i, j]
+                ideal_ij = ideal[i, j]
+                if a_ij <= 0:
+                    a_ij = 1.0
+                if ideal_ij <= 0:
+                    ideal_ij = 1.0
+
+                log_a = np.log(a_ij)
+                log_ideal = np.log(ideal_ij)
+                log_new = (1 - alpha) * log_a + alpha * log_ideal
+                new_ij = np.exp(log_new)
+
+                mat[i, j] = new_ij
+                mat[j, i] = 1.0 / new_ij
+
+        # 3) 새 CR 계산
         _, _, _, CR = ahp_weights(mat)
         it += 1
+
+        # threshold 를 만족하면 즉시 종료
+        if CR <= threshold:
+            break
+
     return mat, orig_CR, CR, it
 
 
@@ -142,7 +183,6 @@ def degree_of_possibility(si, sj):
     l1, m1, u1 = si
     l2, m2, u2 = sj
 
-    # 전형적인 Chang 식
     if m1 >= m2 and l1 >= l2:
         return 1.0
     if u1 <= l2:
@@ -204,7 +244,6 @@ def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
                 V[i, j] = degree_of_possibility(tuple(Si[i]), tuple(Si[j]))
 
     # 6) 개선된 d_i: 다른 모든 요인에 대한 V의 곱
-    #    (일부 연구에서 제안된 방식으로, min 대신 product 사용)
     d = np.ones(n)
     for i in range(n):
         for j in range(n):
@@ -228,12 +267,11 @@ def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
 # 5. Streamlit UI
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
-st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (개선된 Chang Extent).")
+st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (개선된 Chang Extent + 최소 CR 보정).")
 
 with st.sidebar:
     st.header("⚙️ 분석 옵션")
 
-    # 비퍼지화 방법: 기하 → 산술 → 가중
     options = [
         "기하평균 ((l×m×u)^(1/3))",
         "산술평균 ((l+m+u)/3)",
@@ -248,6 +286,8 @@ with st.sidebar:
     defuzz_method = defuzz_map[defuzz_disp]
 
     cr_th = st.slider("CR 허용 임계값", 0.0, 0.2, 0.1, 0.01)
+    alpha = st.slider("CR 보정 강도 (alpha)", 0.1, 0.5, 0.3, 0.05)
+    max_iter = st.slider("CR 최대 보정 횟수", 1, 30, 20, 1)
 
 # --- 샘플 데이터 (1_2 형식 예시) ---
 st.markdown("### 📥 샘플 데이터 (1_2 형식 예시)")
@@ -325,7 +365,9 @@ if st.button("🚀 분석 시작", type="primary"):
         for _, row in gdf.iterrows():
             punch = pd.to_numeric(row[comp_cols], errors="coerce").fillna(1).values
             mat = convert_punch_to_matrix(punch, n_factor)
-            cmat, cr0, cr1, it = correct_matrix(mat, threshold=cr_th)
+            cmat, cr0, cr1, it = correct_matrix(
+                mat, threshold=cr_th, max_iter=max_iter, alpha=alpha
+            )
             cons_list.append(
                 {
                     "ID": row[id_col],
