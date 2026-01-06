@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import font_manager
+from matplotlib import font_manager, rcParams
 from scipy import linalg
 import io
 import warnings
@@ -11,47 +11,34 @@ import os
 warnings.filterwarnings("ignore")
 
 # =============================
-# 0. 한글 폰트 자동 설정
+# 0. 한글 폰트: 프로젝트 내 TTF 사용
 # =============================
-def set_korean_font():
+def set_korean_font_from_file():
     """
-    시스템에 설치된 폰트 중에서 한글 폰트를 찾아 Matplotlib 기본 폰트로 설정.
-    - 우선순위: Malgun Gothic > AppleGothic > NanumGothic > 나머지 한글 폰트
+    프로젝트 폴더 안에 포함된 TTF 한글 폰트를 Matplotlib 기본 폰트로 설정.
+    우선 fonts/NanumGothic.ttf 를 찾고, 없으면 현재 폴더의 NanumGothic.ttf 를 찾음.
     """
-    font_paths = font_manager.findSystemFonts(fontpaths=None, fontext="ttf")
-    # (이름, 경로) 리스트 생성
-    names_and_paths = []
-    for path in font_paths:
-        try:
-            prop = font_manager.FontProperties(fname=path)
-            name = prop.get_name()
-            names_and_paths.append((name, path))
-        except Exception:
-            continue
+    candidate_paths = [
+        os.path.join("fonts", "NanumGothic.ttf"),
+        os.path.join(os.path.dirname(__file__), "fonts", "NanumGothic.ttf")
+        if "__file__" in globals() else os.path.join("fonts", "NanumGothic.ttf"),
+        "NanumGothic.ttf",
+    ]
 
-    # 우선순위 리스트
-    preferred = ["Malgun Gothic", "AppleGothic", "NanumGothic", "NanumGothicCoding"]
-
-    chosen_name = None
-    for target in preferred:
-        for name, path in names_and_paths:
-            if target.lower() in name.lower():
-                chosen_name = name
-                break
-        if chosen_name:
+    font_path = None
+    for p in candidate_paths:
+        if os.path.exists(p):
+            font_path = p
             break
 
-    # 우선순위 폰트가 없으면, 한글이 섞여 있을 법한 폰트를 아무거나 선택
-    if not chosen_name and names_and_paths:
-        chosen_name = names_and_paths[0][0]
+    if font_path is not None:
+        font_prop = font_manager.FontProperties(fname=font_path)
+        font_name = font_prop.get_name()
+        rcParams["font.family"] = font_name
+    # 폰트 파일을 못 찾더라도 앱이 죽지 않도록 함
+    rcParams["axes.unicode_minus"] = False
 
-    if chosen_name:
-        plt.rcParams["font.family"] = chosen_name
-    # 음수 부호 깨짐 방지
-    plt.rcParams["axes.unicode_minus"] = False
-
-# 실제로 한글 폰트 설정 실행
-set_korean_font()
+set_korean_font_from_file()
 
 st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
 
@@ -110,8 +97,7 @@ def ahp_weights(matrix):
 
 def correct_matrix(matrix, threshold=0.1, max_iter=20, alpha=0.3):
     """
-    CR 임계값(threshold)을 만족하는 수준까지만
-    '최소한으로' 보정하는 함수.
+    CR 임계값(threshold)을 만족하는 수준까지만 '최소한으로' 보정.
     """
     mat = matrix.astype(float).copy()
     w, lam, CI, CR = ahp_weights(mat)
@@ -526,7 +512,7 @@ if st.button("🚀 분석 시작", type="primary"):
             ax.set_ylabel("Membership degree")
             ax.set_title("Fuzzy Membership Functions")
             ax.grid(True, alpha=0.3)
-            ax.legend()   # 여기 범례에 '요인1' 등 한글이 제대로 표시됨
+            ax.legend()   # 여기 범례에 요인1~4 한글 표시
             st.pyplot(fig)
 
             fig2, ax2 = plt.subplots(figsize=(8, 4))
