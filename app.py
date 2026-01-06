@@ -45,6 +45,7 @@ def convert_punch_to_matrix(punch_data, n_factors):
             elif v > 1:     # 우측이 더 중요
                 mat[i, j] = v
                 mat[j, i] = 1 / v
+            # v == 1 이거나 그 외는 동등 처리
             idx += 1
     return mat
 
@@ -225,7 +226,7 @@ with st.sidebar:
     }
     defuzz_method = defuzz_map[defuzz_disp]
 
-# --- 샘플 데이터 (원하시면 삭제 가능) ---
+# --- 샘플 데이터 (1_2 형식 예시) ---
 st.markdown("### 📥 샘플 데이터 (1_2 형식 예시)")
 sample_df = pd.DataFrame(
     {
@@ -279,11 +280,9 @@ for c in comp_cols:
         a, b = name.split("_")
         index_set.add(int(a))
         index_set.add(int(b))
-# 예: {1,2,3,4} → 요인1~4
 if len(index_set) == n_factor:
     labels = [f"요인{i}" for i in sorted(index_set)]
 else:
-    # 예외적으로 라벨 수가 안 맞으면 요인1~n으로 생성
     labels = [f"요인{i+1}" for i in range(n_factor)]
 
 st.info(f"자동 인식: 요인 {n_factor}개, 쌍대비교 {n_comp}개  (라벨: {', '.join(labels)})")
@@ -302,7 +301,8 @@ if st.button("🚀 분석 시작", type="primary"):
 
         matrices = []
         for _, row in gdf.iterrows():
-            punch = row[comp_cols].values
+            # 🔴 여기서 펀칭 데이터를 강제로 숫자로 변환
+            punch = pd.to_numeric(row[comp_cols], errors="coerce").fillna(1).values
             mat = convert_punch_to_matrix(punch, n_factor)
             cmat, cr0, cr1, it = correct_matrix(mat, threshold=cr_th)
             cons_list.append(
