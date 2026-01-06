@@ -45,7 +45,7 @@ def convert_punch_to_matrix(punch_data, n_factors):
             elif v > 1:     # 우측이 더 중요
                 mat[i, j] = v
                 mat[j, i] = 1 / v
-            # v == 1 이거나 그 외는 동등 처리
+            # v == 1 이거나 그 외는 동등
             idx += 1
     return mat
 
@@ -115,10 +115,8 @@ def fuzzy_add(f1, f2):
 
 
 def defuzzify_tfn_array(Si, method="weighted"):
-    """Si: shape (n,3) TFN 배열 → 정규화된 crisp 가중치."""
-    L = Si[:, 0]
-    M = Si[:, 1]
-    U = Si[:, 2]
+    """Si: shape (n,3) TFN 배열 → 비퍼지화 값 (정규화 전)."""
+    L = Si[:, 0]; M = Si[:, 1]; U = Si[:, 2]
     if method == "weighted":
         c = (L + 2 * M + U) / 4
     elif method == "arithmetic":
@@ -130,8 +128,7 @@ def defuzzify_tfn_array(Si, method="weighted"):
         c = (L2 * M2 * U2) ** (1 / 3)
     else:
         c = M.copy()
-    s = c.sum()
-    return c / s if s > 0 else c
+    return c
 
 
 # -----------------------------
@@ -140,8 +137,10 @@ def defuzzify_tfn_array(Si, method="weighted"):
 def fuzzy_ahp_chang(matrix, defuzzy_method="weighted"):
     """
     Chang(1996)의 Extent Analysis 기반 Fuzzy AHP.
-    입력: AHP 쌍대비교 행렬
-    출력: Si (n,3), priority(정규화 가중치), crisp(참고용)
+    - Si: fuzzy synthetic extent
+    - d: 가능성 정도 기반 우선순위 값 (정규화 전)
+    - w_fuzzy: d의 정규화 결과 (최종 Fuzzy 가중치)
+    - crisp_S: Si 비퍼지화 값 (참고용)
     """
     n = matrix.shape[0]
 
@@ -200,29 +199,35 @@ def fuzzy_ahp_chang(matrix, defuzzy_method="weighted"):
             vals.append(V_geq(Si[i], Si[j]))
         d[i] = min(vals) if vals else 1.0
 
-    priority = d / d.sum() if d.sum() > 0 else np.ones(n) / n
-    crisp = defuzzify_tfn_array(Si, method=defuzzy_method)
+    # 7) 최종 Fuzzy 가중치 (정규화)
+    if d.sum() == 0:
+        w_fuzzy = np.ones(n) / n
+    else:
+        w_fuzzy = d / d.sum()
 
-    return Si, priority, crisp
+    # 8) Si 비퍼지화 (참고용)
+    crisp_S = defuzzify_tfn_array(Si, method=defuzzy_method)
+
+    return Si, d, w_fuzzy, crisp_S
 
 
 # -----------------------------
 # 5. Streamlit UI
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
-st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (Chang Extent).")
+st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (Chang Extent, 가능성 정도 반영).")
 
 with st.sidebar:
     st.header("⚙️ 분석 옵션")
     cr_th = st.slider("CR 허용 임계값", 0.0, 0.2, 0.1, 0.01)
     defuzz_disp = st.selectbox(
-        "비퍼지화 방법",
+        "비퍼지화 방법 (Si 비퍼지화)",
         ["가중평균 (l+2m+u)/4", "산술평균 (l+m+u)/3", "기하평균 (l×m×u)^(1/3)"],
     )
     defuzz_map = {
         "가중평균 (l+2m+u)/4": "weighted",
         "산술평균 (l+m+u)/3": "arithmetic",
-        "기하평균 (l×m×u)^(1/3)": "geometric",
+        "기하평균 (l×m+u)^(1/3)": "geometric",
     }
     defuzz_method = defuzz_map[defuzz_disp]
 
@@ -243,7 +248,6 @@ sample_df = pd.DataFrame(
 buf = io.BytesIO()
 with pd.ExcelWriter(buf, engine="openpyxl") as w:
     sample_df.to_excel(w, index=False, sheet_name="Sample")
-
 st.download_button(
     "📄 샘플 다운로드",
     buf.getvalue(),
@@ -301,7 +305,7 @@ if st.button("🚀 분석 시작", type="primary"):
 
         matrices = []
         for _, row in gdf.iterrows():
-            # 🔴 여기서 펀칭 데이터를 강제로 숫자로 변환
+            # 문자열 → 숫자 변환 (오류 방지)
             punch = pd.to_numeric(row[comp_cols], errors="coerce").fillna(1).values
             mat = convert_punch_to_matrix(punch, n_factor)
             cmat, cr0, cr1, it = correct_matrix(mat, threshold=cr_th)
@@ -319,7 +323,7 @@ if st.button("🚀 분석 시작", type="primary"):
 
         gm = geometric_mean_matrix(matrices)
         w_ahp, lam, CI, CR = ahp_weights(gm)
-        Si, w_fuzzy, crisp = fuzzy_ahp_chang(gm, defuzz_method)
+        Si, d_raw, w_fuzzy, crisp_S = fuzzy_ahp_chang(gm, defuzz_method)
 
         all_results[g] = {
             "matrix": gm,
@@ -328,8 +332,9 @@ if st.button("🚀 분석 시작", type="primary"):
             "CI": CI,
             "CR": CR,
             "Si": Si,
+            "d_raw": d_raw,
             "w_fuzzy": w_fuzzy,
-            "crisp": crisp,
+            "crisp_S": crisp_S,
         }
 
         prog.progress((gi + 1) * step)
@@ -396,7 +401,7 @@ if st.button("🚀 분석 시작", type="primary"):
     with tabs[3]:
         for g, r in all_results.items():
             st.markdown(f"#### 그룹: {g}")
-            st.info(f"비퍼지화 방법: {defuzz_disp}")
+            st.info(f"비퍼지화 방법(Si용): {defuzz_disp}")
             Si = r["Si"]
             detail = pd.DataFrame(
                 {
@@ -404,7 +409,8 @@ if st.button("🚀 분석 시작", type="primary"):
                     "Fuzzy (Lower)": Si[:, 0],
                     "Fuzzy (Medium)": Si[:, 1],
                     "Fuzzy (Upper)": Si[:, 2],
-                    "Crisp": r["crisp"],
+                    "Crisp(Si)": r["crisp_S"],
+                    "d_i (raw)": r["d_raw"],
                     "Norm": r["w_fuzzy"],
                     "순위": pd.Series(r["w_fuzzy"]).rank(ascending=False, method="min").astype(int),
                 }
@@ -415,7 +421,8 @@ if st.button("🚀 분석 시작", type="primary"):
                         "Fuzzy (Lower)": "{:.4f}",
                         "Fuzzy (Medium)": "{:.4f}",
                         "Fuzzy (Upper)": "{:.4f}",
-                        "Crisp": "{:.4f}",
+                        "Crisp(Si)": "{:.4f}",
+                        "d_i (raw)": "{:.4f}",
                         "Norm": "{:.4f}",
                     }
                 ),
