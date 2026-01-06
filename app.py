@@ -2,43 +2,22 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import font_manager, rcParams
+from matplotlib import rcParams
 from scipy import linalg
 import io
 import warnings
-import os
 
 warnings.filterwarnings("ignore")
 
 # =============================
-# 0. 한글 폰트: 프로젝트 내 TTF 사용
+# 0. 한글 폰트 설정 (Windows: 맑은 고딕)
 # =============================
-def set_korean_font_from_file():
-    """
-    프로젝트 폴더 안에 포함된 TTF 한글 폰트를 Matplotlib 기본 폰트로 설정.
-    우선 fonts/NanumGothic.ttf 를 찾고, 없으면 현재 폴더의 NanumGothic.ttf 를 찾음.
-    """
-    candidate_paths = [
-        os.path.join("fonts", "NanumGothic.ttf"),
-        os.path.join(os.path.dirname(__file__), "fonts", "NanumGothic.ttf")
-        if "__file__" in globals() else os.path.join("fonts", "NanumGothic.ttf"),
-        "NanumGothic.ttf",
-    ]
-
-    font_path = None
-    for p in candidate_paths:
-        if os.path.exists(p):
-            font_path = p
-            break
-
-    if font_path is not None:
-        font_prop = font_manager.FontProperties(fname=font_path)
-        font_name = font_prop.get_name()
-        rcParams["font.family"] = font_name
-    # 폰트 파일을 못 찾더라도 앱이 죽지 않도록 함
-    rcParams["axes.unicode_minus"] = False
-
-set_korean_font_from_file()
+try:
+    rcParams["font.family"] = "Malgun Gothic"  # 윈도우 기본 한글 폰트
+except Exception:
+    # 폰트 설정 실패하더라도 앱이 죽지 않도록
+    pass
+rcParams["axes.unicode_minus"] = False  # 음수 기호 깨짐 방지
 
 st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
 
@@ -512,7 +491,7 @@ if st.button("🚀 분석 시작", type="primary"):
             ax.set_ylabel("Membership degree")
             ax.set_title("Fuzzy Membership Functions")
             ax.grid(True, alpha=0.3)
-            ax.legend()   # 여기 범례에 요인1~4 한글 표시
+            ax.legend()   # 범례에 요인1~4 한글 출력 (윈도우 + 맑은 고딕)
             st.pyplot(fig)
 
             fig2, ax2 = plt.subplots(figsize=(8, 4))
