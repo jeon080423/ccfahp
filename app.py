@@ -225,18 +225,18 @@ with st.sidebar:
     }
     defuzz_method = defuzz_map[defuzz_disp]
 
-# --- 샘플 데이터 (여기서 AttributeError 오타가 나왔던 부분) ---
-st.markdown("### 📥 샘플 데이터")
+# --- 샘플 데이터 (원하시면 삭제 가능) ---
+st.markdown("### 📥 샘플 데이터 (1_2 형식 예시)")
 sample_df = pd.DataFrame(
     {
         "ID": [1, 2, 3, 4, 5, 6],
-        "Type": ["A", "A", "A", "B", "B", "B"],
-        "요인1 vs 요인2": [3, 5, 2, -2, -3, -1],
-        "요인1 vs 요인3": [5, 7, 4, 3, 5, 2],
-        "요인1 vs 요인4": [7, 9, 5, 5, 7, 4],
-        "요인2 vs 요인3": [3, 5, 3, 5, 7, 4],
-        "요인2 vs 요인4": [5, 7, 4, 7, 9, 6],
-        "요인3 vs 요인4": [3, 5, 2, 5, 7, 3],
+        "type": [1, 1, 1, 1, 1, 1],
+        "1_2": [3, 5, 2, -2, -3, -1],
+        "1_3": [5, 7, 4, 3, 5, 2],
+        "1_4": [7, 9, 5, 5, 7, 4],
+        "2_3": [3, 5, 3, 5, 7, 4],
+        "2_4": [5, 7, 4, 7, 9, 6],
+        "3_4": [3, 5, 2, 5, 7, 3],
     }
 )
 buf = io.BytesIO()
@@ -246,7 +246,7 @@ with pd.ExcelWriter(buf, engine="openpyxl") as w:
 st.download_button(
     "📄 샘플 다운로드",
     buf.getvalue(),
-    "fuzzy_ahp_sample.xlsx",
+    "fuzzy_ahp_sample_1_2.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
@@ -271,18 +271,22 @@ comp_cols = df.columns[2:]
 n_comp = len(comp_cols)
 n_factor = int((1 + np.sqrt(1 + 8 * n_comp)) / 2)
 
-labels = []
+# --- 1_2 / 1_3 형식으로 요인 라벨 자동 생성 ---
+index_set = set()
 for c in comp_cols:
-    parts = str(c).split(" vs ")
-    if len(parts) == 2:
-        if parts[0] not in labels:
-            labels.append(parts[0])
-        if parts[1] not in labels:
-            labels.append(parts[1])
-if len(labels) != n_factor:
+    name = str(c)
+    if "_" in name:
+        a, b = name.split("_")
+        index_set.add(int(a))
+        index_set.add(int(b))
+# 예: {1,2,3,4} → 요인1~4
+if len(index_set) == n_factor:
+    labels = [f"요인{i}" for i in sorted(index_set)]
+else:
+    # 예외적으로 라벨 수가 안 맞으면 요인1~n으로 생성
     labels = [f"요인{i+1}" for i in range(n_factor)]
 
-st.info(f"자동 인식: 요인 {n_factor}개, 쌍대비교 {n_comp}개")
+st.info(f"자동 인식: 요인 {n_factor}개, 쌍대비교 {n_comp}개  (라벨: {', '.join(labels)})")
 
 has_group = df[type_col].notna().any()
 groups = df[type_col].dropna().unique() if has_group else ["All"]
