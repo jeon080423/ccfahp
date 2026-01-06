@@ -114,7 +114,7 @@ def fuzzy_add(f1, f2):
     return (l1 + l2, m1 + m2, u1 + u2)
 
 
-def defuzzify_tfn_array(Si, method="weighted"):
+def defuzzify_tfn_array(Si, method="geometric"):
     """Si: shape (n,3) TFN 배열 → 비퍼지화 값 (정규화 전)."""
     L = Si[:, 0]; M = Si[:, 1]; U = Si[:, 2]
     if method == "weighted":
@@ -134,7 +134,7 @@ def defuzzify_tfn_array(Si, method="weighted"):
 # -----------------------------
 # 4. Chang Extent Fuzzy AHP
 # -----------------------------
-def fuzzy_ahp_chang(matrix, defuzzy_method="weighted"):
+def fuzzy_ahp_chang(matrix, defuzzy_method="geometric"):
     """
     Chang(1996)의 Extent Analysis 기반 Fuzzy AHP.
     - Si: fuzzy synthetic extent
@@ -219,17 +219,24 @@ st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (Chang
 
 with st.sidebar:
     st.header("⚙️ 분석 옵션")
-    cr_th = st.slider("CR 허용 임계값", 0.0, 0.2, 0.1, 0.01)
-    defuzz_disp = st.selectbox(
-        "비퍼지화 방법 (Si 비퍼지화)",
-        ["가중평균 (l+2m+u)/4", "산술평균 (l+m+u)/3", "기하평균 (l×m×u)^(1/3)"],
-    )
+
+    # ❶ 비퍼지화 방법 순서를 기하 → 산술 → 가중으로 고정
+    options = [
+        "기하평균 ((l×m×u)^(1/3))",
+        "산술평균 ((l+m+u)/3)",
+        "가중평균 ((l+2m+u)/4)",
+    ]
+    defuzz_disp = st.selectbox("비퍼지화 방법 (Si 비퍼지화)", options)
+
+    # ❷ KeyError 방지를 위해 딕셔너리 키를 selectbox 옵션과 1:1 매칭
     defuzz_map = {
-        "가중평균 (l+2m+u)/4": "weighted",
-        "산술평균 (l+m+u)/3": "arithmetic",
-        "기하평균 (l×m+u)^(1/3)": "geometric",
+        "기하평균 ((l×m×u)^(1/3))": "geometric",
+        "산술평균 ((l+m+u)/3)": "arithmetic",
+        "가중평균 ((l+2m+u)/4)": "weighted",
     }
     defuzz_method = defuzz_map[defuzz_disp]
+
+    cr_th = st.slider("CR 허용 임계값", 0.0, 0.2, 0.1, 0.01)
 
 # --- 샘플 데이터 (1_2 형식 예시) ---
 st.markdown("### 📥 샘플 데이터 (1_2 형식 예시)")
@@ -305,7 +312,7 @@ if st.button("🚀 분석 시작", type="primary"):
 
         matrices = []
         for _, row in gdf.iterrows():
-            # 문자열 → 숫자 변환 (오류 방지)
+            # 문자열 → 숫자 변환 (TypeError 방지)
             punch = pd.to_numeric(row[comp_cols], errors="coerce").fillna(1).values
             mat = convert_punch_to_matrix(punch, n_factor)
             cmat, cr0, cr1, it = correct_matrix(mat, threshold=cr_th)
