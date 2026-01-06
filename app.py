@@ -132,14 +132,30 @@ def defuzzify_tfn_array(Si, method="geometric"):
 
 
 # -----------------------------
-# 4. Chang Extent Fuzzy AHP
+# 4. 개선된 Chang Extent Fuzzy AHP
 # -----------------------------
-def fuzzy_ahp_chang(matrix, defuzzy_method="geometric"):
+def degree_of_possibility(si, sj):
     """
-    Chang(1996)의 Extent Analysis 기반 Fuzzy AHP.
+    V(Si >= Sj) 계산.
+    si = (l1, m1, u1), sj = (l2, m2, u2)
+    """
+    l1, m1, u1 = si
+    l2, m2, u2 = sj
+
+    # 전형적인 Chang 식
+    if m1 >= m2 and l1 >= l2:
+        return 1.0
+    if u1 <= l2:
+        return 0.0
+    return max(0.0, min(1.0, (u1 - l2) / ((u1 - m1) + (m2 - l2))))
+
+
+def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
+    """
+    개선된 Fuzzy AHP (Chang + d_i 곱 방식).
     - Si: fuzzy synthetic extent
-    - d: 가능성 정도 기반 우선순위 값 (정규화 전)
-    - w_fuzzy: d의 정규화 결과 (최종 Fuzzy 가중치)
+    - d: 각 요인의 가능성 기반 값 (곱)
+    - w_fuzzy: d 정규화 (최종 Fuzzy 가중치)
     - crisp_S: Si 비퍼지화 값 (참고용)
     """
     n = matrix.shape[0]
@@ -178,28 +194,25 @@ def fuzzy_ahp_chang(matrix, defuzzy_method="geometric"):
         Si[i, 1] = m_i / total_m
         Si[i, 2] = u_i / total_l
 
-    # 5) Degree of possibility V(Si >= Sj)
-    def V_geq(si, sj):
-        l1, m1, u1 = si
-        l2, m2, u2 = sj
-        if m1 >= m2:
-            return 1.0
-        elif l2 >= u1:
-            return 0.0
-        else:
-            return (u1 - l2) / ((u1 - m1) + (m2 - l2))
-
-    # 6) d_i = min_j V(Si >= Sj)
-    d = np.zeros(n)
+    # 5) V 행렬 계산
+    V = np.ones((n, n))
     for i in range(n):
-        vals = []
+        for j in range(n):
+            if i == j:
+                V[i, j] = 1.0
+            else:
+                V[i, j] = degree_of_possibility(tuple(Si[i]), tuple(Si[j]))
+
+    # 6) 개선된 d_i: 다른 모든 요인에 대한 V의 곱
+    #    (일부 연구에서 제안된 방식으로, min 대신 product 사용)
+    d = np.ones(n)
+    for i in range(n):
         for j in range(n):
             if i == j:
                 continue
-            vals.append(V_geq(Si[i], Si[j]))
-        d[i] = min(vals) if vals else 1.0
+            d[i] *= V[i, j]
 
-    # 7) 최종 Fuzzy 가중치 (정규화)
+    # 7) 정규화하여 최종 Fuzzy 가중치
     if d.sum() == 0:
         w_fuzzy = np.ones(n) / n
     else:
@@ -208,27 +221,25 @@ def fuzzy_ahp_chang(matrix, defuzzy_method="geometric"):
     # 8) Si 비퍼지화 (참고용)
     crisp_S = defuzzify_tfn_array(Si, method=defuzzy_method)
 
-    return Si, d, w_fuzzy, crisp_S
+    return Si, d, w_fuzzy, crisp_S, V
 
 
 # -----------------------------
 # 5. Streamlit UI
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
-st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (Chang Extent, 가능성 정도 반영).")
+st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (개선된 Chang Extent).")
 
 with st.sidebar:
     st.header("⚙️ 분석 옵션")
 
-    # ❶ 비퍼지화 방법 순서를 기하 → 산술 → 가중으로 고정
+    # 비퍼지화 방법: 기하 → 산술 → 가중
     options = [
         "기하평균 ((l×m×u)^(1/3))",
         "산술평균 ((l+m+u)/3)",
         "가중평균 ((l+2m+u)/4)",
     ]
     defuzz_disp = st.selectbox("비퍼지화 방법 (Si 비퍼지화)", options)
-
-    # ❷ KeyError 방지를 위해 딕셔너리 키를 selectbox 옵션과 1:1 매칭
     defuzz_map = {
         "기하평균 ((l×m×u)^(1/3))": "geometric",
         "산술평균 ((l+m+u)/3)": "arithmetic",
@@ -312,7 +323,6 @@ if st.button("🚀 분석 시작", type="primary"):
 
         matrices = []
         for _, row in gdf.iterrows():
-            # 문자열 → 숫자 변환 (TypeError 방지)
             punch = pd.to_numeric(row[comp_cols], errors="coerce").fillna(1).values
             mat = convert_punch_to_matrix(punch, n_factor)
             cmat, cr0, cr1, it = correct_matrix(mat, threshold=cr_th)
@@ -330,7 +340,7 @@ if st.button("🚀 분석 시작", type="primary"):
 
         gm = geometric_mean_matrix(matrices)
         w_ahp, lam, CI, CR = ahp_weights(gm)
-        Si, d_raw, w_fuzzy, crisp_S = fuzzy_ahp_chang(gm, defuzz_method)
+        Si, d_raw, w_fuzzy, crisp_S, V = fuzzy_ahp_chang_improved(gm, defuzz_method)
 
         all_results[g] = {
             "matrix": gm,
@@ -342,6 +352,7 @@ if st.button("🚀 분석 시작", type="primary"):
             "d_raw": d_raw,
             "w_fuzzy": w_fuzzy,
             "crisp_S": crisp_S,
+            "V": V,
         }
 
         prog.progress((gi + 1) * step)
@@ -429,7 +440,7 @@ if st.button("🚀 분석 시작", type="primary"):
                         "Fuzzy (Medium)": "{:.4f}",
                         "Fuzzy (Upper)": "{:.4f}",
                         "Crisp(Si)": "{:.4f}",
-                        "d_i (raw)": "{:.4f}",
+                        "d_i (raw)": "{:.6f}",
                         "Norm": "{:.4f}",
                     }
                 ),
