@@ -2,23 +2,56 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import font_manager, rc
+from matplotlib import font_manager
 from scipy import linalg
 import io
 import warnings
+import os
 
 warnings.filterwarnings("ignore")
 
 # =============================
-# 0. 한글 폰트 설정 (중요)
+# 0. 한글 폰트 자동 설정
 # =============================
-# Windows: Malgun Gothic, Mac: AppleGothic, Linux: NanumGothic 등 환경에 맞게 수정
-try:
-    plt.rcParams["font.family"] = "Malgun Gothic"   # 한글 폰트
-except Exception:
-    # 폰트가 없을 경우 기본 폰트 사용 (그래도 코드가 죽지 않도록)
-    pass
-plt.rcParams["axes.unicode_minus"] = False  # 음수 부호 깨짐 방지
+def set_korean_font():
+    """
+    시스템에 설치된 폰트 중에서 한글 폰트를 찾아 Matplotlib 기본 폰트로 설정.
+    - 우선순위: Malgun Gothic > AppleGothic > NanumGothic > 나머지 한글 폰트
+    """
+    font_paths = font_manager.findSystemFonts(fontpaths=None, fontext="ttf")
+    # (이름, 경로) 리스트 생성
+    names_and_paths = []
+    for path in font_paths:
+        try:
+            prop = font_manager.FontProperties(fname=path)
+            name = prop.get_name()
+            names_and_paths.append((name, path))
+        except Exception:
+            continue
+
+    # 우선순위 리스트
+    preferred = ["Malgun Gothic", "AppleGothic", "NanumGothic", "NanumGothicCoding"]
+
+    chosen_name = None
+    for target in preferred:
+        for name, path in names_and_paths:
+            if target.lower() in name.lower():
+                chosen_name = name
+                break
+        if chosen_name:
+            break
+
+    # 우선순위 폰트가 없으면, 한글이 섞여 있을 법한 폰트를 아무거나 선택
+    if not chosen_name and names_and_paths:
+        chosen_name = names_and_paths[0][0]
+
+    if chosen_name:
+        plt.rcParams["font.family"] = chosen_name
+    # 음수 부호 깨짐 방지
+    plt.rcParams["axes.unicode_minus"] = False
+
+# 실제로 한글 폰트 설정 실행
+set_korean_font()
 
 st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
 
@@ -186,9 +219,7 @@ def degree_of_possibility(si, sj):
 
 
 def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
-    """
-    개선된 Fuzzy AHP (Chang + d_i 곱 방식).
-    """
+    """개선된 Fuzzy AHP (Chang + d_i 곱 방식)."""
     n = matrix.shape[0]
 
     # 1) Fuzzy pairwise matrix
@@ -495,7 +526,7 @@ if st.button("🚀 분석 시작", type="primary"):
             ax.set_ylabel("Membership degree")
             ax.set_title("Fuzzy Membership Functions")
             ax.grid(True, alpha=0.3)
-            ax.legend()  # 여기에서 한글 라벨이 깨지지 않도록 폰트 설정 완료
+            ax.legend()   # 여기 범례에 '요인1' 등 한글이 제대로 표시됨
             st.pyplot(fig)
 
             fig2, ax2 = plt.subplots(figsize=(8, 4))
