@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import rcParams
 from scipy import linalg, stats
 import io
 import warnings
@@ -10,25 +9,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
-
-# -----------------------------
-# 0. 시각화 한글 폰트: 그래프에만 적용
-# -----------------------------
-def enable_korean_for_axes(ax):
-    """그래프 축/범례에만 한글 폰트 적용 (윈도우: Malgun Gothic)."""
-    try:
-        for label in (ax.get_xticklabels() + ax.get_yticklabels()):
-            label.set_fontfamily("Malgun Gothic")
-        ax.title.set_fontfamily("Malgun Gothic")
-        ax.xaxis.label.set_fontfamily("Malgun Gothic")
-        ax.yaxis.label.set_fontfamily("Malgun Gothic")
-        leg = ax.get_legend()
-        if leg is not None:
-            for text in leg.get_texts():
-                text.set_fontfamily("Malgun Gothic")
-    except Exception:
-        pass
-    rcParams["axes.unicode_minus"] = False
 
 # -----------------------------
 # 1. 기본 상수
@@ -48,7 +28,7 @@ FUZZY_SCALE = {
 }
 
 # -----------------------------
-# 2. AHP 관련 함수
+# 2. AHP 관련 함수 (기하평균법 사용)
 # -----------------------------
 def convert_punch_to_matrix(punch_data, n_factors):
     """펀칭 데이터를 쌍대비교 행렬로 변환 (음수=좌측 중요, 양수=우측 중요)."""
@@ -70,25 +50,30 @@ def convert_punch_to_matrix(punch_data, n_factors):
     return mat
 
 
-def ahp_weights(matrix):
-    """고유벡터 기반 AHP 가중치 및 CR."""
+def ahp_weights_geometric(matrix):
+    """
+    행별 기하평균법(Geometric Mean Method) 기반 AHP 가중치.[web:190]
+    λmax, CI, CR는 eigenvalue로 계산해 일관성 지표는 동일하게 유지.
+    """
     n = matrix.shape[0]
-    eigvals, eigvecs = linalg.eig(matrix)
-    max_idx = np.argmax(eigvals.real)
-    w = np.abs(eigvecs[:, max_idx].real)
-    w = w / w.sum()
-    lam_max = eigvals[max_idx].real
+    gm_row = np.prod(matrix, axis=1) ** (1.0 / n)
+    w = gm_row / gm_row.sum()
+
+    eigvals, _ = linalg.eig(matrix)
+    lam_max = np.max(eigvals.real)
     CI = (lam_max - n) / (n - 1) if n > 1 else 0
     CR = CI / RI.get(n, 1.49) if n > 2 else 0
+
     return w, lam_max, CI, CR
 
 
 def correct_matrix(matrix, threshold=0.1, max_iter=20, alpha=0.3):
     """
     CR 임계값(threshold)을 만족하는 수준까지만 '최소한으로' 보정.
+    보정 과정에서 이상적 비율은 기하평균법으로 계산된 가중치를 사용.
     """
     mat = matrix.astype(float).copy()
-    w, lam, CI, CR = ahp_weights(mat)
+    w, lam, CI, CR = ahp_weights_geometric(mat)
     orig_CR = CR
     it = 0
 
@@ -98,7 +83,7 @@ def correct_matrix(matrix, threshold=0.1, max_iter=20, alpha=0.3):
     n = mat.shape[0]
 
     while CR > threshold and it < max_iter:
-        w, _, _, _ = ahp_weights(mat)
+        w, _, _, _ = ahp_weights_geometric(mat)
         ideal = np.ones_like(mat)
         for i in range(n):
             for j in range(n):
@@ -121,7 +106,7 @@ def correct_matrix(matrix, threshold=0.1, max_iter=20, alpha=0.3):
                 mat[i, j] = new_ij
                 mat[j, i] = 1.0 / new_ij
 
-        _, _, _, CR = ahp_weights(mat)
+        _, _, _, CR = ahp_weights_geometric(mat)
         it += 1
         if CR <= threshold:
             break
@@ -130,7 +115,7 @@ def correct_matrix(matrix, threshold=0.1, max_iter=20, alpha=0.3):
 
 
 def geometric_mean_matrix(mats):
-    """여러 행렬의 기하평균."""
+    """여러 행렬의 기하평균 (집단 통합 단계)."""
     if len(mats) == 0:
         return None
     mats = np.array(mats)
@@ -267,10 +252,7 @@ def test_factor_significance(weights_matrix, alpha=0.05):
     요인별 가중치(전문가 x 요인)를 입력받아
     - 요인 수가 2개면 대응 t-검정
     - 3개 이상이면 Friedman 검정
-    을 수행한다.
-
-    weights_matrix: shape = (n_experts, n_factors) 의 numpy 배열
-    반환: dict { 'method': ..., 'stat': ..., 'pvalue': ..., 'n_experts': ..., 'n_factors': ... }
+    을 수행한다.[web:186]
     """
     n_experts, n_factors = weights_matrix.shape
 
@@ -285,12 +267,9 @@ def test_factor_significance(weights_matrix, alpha=0.05):
         }
 
     if n_factors == 2:
-        # 대응표본 t-검정 (요인1 vs 요인2)[web:57][web:151]
         stat, pval = stats.ttest_rel(weights_matrix[:, 0], weights_matrix[:, 1])
         method = "paired_t_test"
     else:
-        # Friedman 검정 (비모수 반복측정 ANOVA)[web:145][web:148][web:153]
-        # scipy.stats.friedmanchisquare는 열 기준 인수를 여러 개 받으므로 transpose
         args = [weights_matrix[:, j] for j in range(n_factors)]
         stat, pval = stats.friedmanchisquare(*args)
         method = "friedman_test"
@@ -310,7 +289,7 @@ def test_factor_significance(weights_matrix, alpha=0.05):
 # 6. Streamlit UI
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
-st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (개선된 Chang Extent + 최소 CR 보정 + t-검정 + 요인간 유의성 검정).")
+st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (Geometric Mean Method + 개선된 Chang Extent + 통계 검정).")
 
 with st.sidebar:
     st.header("⚙️ 분석 옵션")
@@ -366,6 +345,11 @@ if not file:
     st.info("👆 Excel 파일을 업로드하면 분석을 시작할 수 있습니다.")
     st.stop()
 
+# 업로드 파일의 첫 번째 시트명 추출
+excel_file_obj = pd.ExcelFile(file)
+uploaded_sheet_names = excel_file_obj.sheet_names  # list[str][web:183]
+first_sheet_name = uploaded_sheet_names[0] if uploaded_sheet_names else "Data"
+
 df = pd.read_excel(file)
 st.success(f"파일 업로드 완료: {len(df)}행")
 
@@ -379,7 +363,7 @@ comp_cols = df.columns[2:]
 n_comp = len(comp_cols)
 n_factor = int((1 + np.sqrt(1 + 8 * n_comp)) / 2)
 
-# --- 1_2 / 1_3 형식으로 요인 라벨 자동 생성 ---
+# --- 요인 라벨: 한글/영문 분리 ---
 index_set = set()
 for c in comp_cols:
     name = str(c)
@@ -388,11 +372,12 @@ for c in comp_cols:
         index_set.add(int(a))
         index_set.add(int(b))
 if len(index_set) == n_factor:
-    labels = [f"요인{i}" for i in sorted(index_set)]
+    labels_kr = [f"요인{i}" for i in sorted(index_set)]
 else:
-    labels = [f"요인{i+1}" for i in range(n_factor)]
+    labels_kr = [f"요인{i+1}" for i in range(n_factor)]
+labels_en = [f"Factor {i+1}" for i in range(n_factor)]
 
-st.info(f"자동 인식: 요인 {n_factor}개, 쌍대비교 {n_comp}개  (라벨: {', '.join(labels)})")
+st.info(f"자동 인식: 요인 {n_factor}개, 쌍대비교 {n_comp}개  (라벨: {', '.join(labels_kr)})")
 
 has_group = df[type_col].notna().any()
 groups = df[type_col].dropna().unique() if has_group else ["All"]
@@ -402,8 +387,6 @@ if st.button("🚀 분석 시작", type="primary"):
     cons_list = []
     prog = st.progress(0.0)
     step = 1.0 / len(groups)
-
-    # 요인간 검정을 위해 그룹별 전문가-가중치 행렬 저장 (Fuzzy 기준)
     factor_tests = []
 
     for gi, g in enumerate(groups):
@@ -429,7 +412,7 @@ if st.button("🚀 분석 시작", type="primary"):
             matrices.append(cmat)
 
         gm = geometric_mean_matrix(matrices)
-        w_ahp, lam, CI, CR = ahp_weights(gm)
+        w_ahp, lam, CI, CR = ahp_weights_geometric(gm)
         Si, d_raw, w_fuzzy, crisp_S, V = fuzzy_ahp_chang_improved(gm, defuzz_method)
 
         all_results[g] = {
@@ -445,13 +428,7 @@ if st.button("🚀 분석 시작", type="primary"):
             "V": V,
         }
 
-        # 그룹별 전문가×요인 Fuzzy 가중치 행렬 구성
-        # 여기서는 각 응답자의 보정 행렬에서 fuzzy AHP를 다시 돌리는 대신,
-        # 단순화를 위해 "기하평균 행렬 기반 그룹 가중치"만 사용.
-        # 전문가 단위 분석이 필요하면 별도의 루프에서 개별 w_fuzzy를 계산해 쌓으면 됨.
-        # 지금은 그룹 수준이므로 n_experts=1로 처리되며, n_factors>=2이면 Friedman은 의미 제한적임.
-        # 실무에서는 전문가별 w_fuzzy 행렬을 만드는 것을 권장.
-        weights_mat = np.vstack([w_fuzzy])  # shape (1, n_factor)
+        weights_mat = np.vstack([w_fuzzy])
         test_res = test_factor_significance(weights_mat, alpha=alpha_factor)
         test_res["Group"] = g
         factor_tests.append(test_res)
@@ -466,7 +443,7 @@ if st.button("🚀 분석 시작", type="primary"):
             "AHP 행렬",
             "비교 분석",
             "Fuzzy 상세",
-            "시각화",
+            "Visualization",
             "모형간 t-검정",
             "요인간 유의성",
             "엑셀 저장",
@@ -490,7 +467,7 @@ if st.button("🚀 분석 시작", type="primary"):
     with tabs[1]:
         for g, r in all_results.items():
             st.markdown(f"#### 그룹: {g}")
-            mat_df = pd.DataFrame(r["matrix"], index=labels, columns=labels)
+            mat_df = pd.DataFrame(r["matrix"], index=labels_kr, columns=labels_kr)
             st.dataframe(mat_df.style.format("{:.4f}"), use_container_width=True)
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -502,7 +479,7 @@ if st.button("🚀 분석 시작", type="primary"):
             with c4:
                 st.metric("일관성", "✅" if r["CR"] <= cr_th else "⚠️")
 
-    # 3) 비교 분석 (AHP vs Fuzzy)
+    # 3) 비교 분석
     comp_all = {}
     with tabs[2]:
         for g, r in all_results.items():
@@ -512,7 +489,7 @@ if st.button("🚀 분석 시작", type="primary"):
             diff = fuzzy_rank - ahp_rank
             comp = pd.DataFrame(
                 {
-                    "항목": labels,
+                    "항목": labels_kr,
                     "AHP 가중치": r["ahp_w"],
                     "AHP 순위": ahp_rank,
                     "Fuzzy 가중치": r["w_fuzzy"],
@@ -537,7 +514,7 @@ if st.button("🚀 분석 시작", type="primary"):
             Si = r["Si"]
             detail = pd.DataFrame(
                 {
-                    "구분": labels,
+                    "구분": labels_kr,
                     "Fuzzy (Lower)": Si[:, 0],
                     "Fuzzy (Medium)": Si[:, 1],
                     "Fuzzy (Upper)": Si[:, 2],
@@ -562,15 +539,15 @@ if st.button("🚀 분석 시작", type="primary"):
                 use_container_width=True,
             )
 
-    # 5) 시각화
+    # 5) Visualization (영문 라벨)
     with tabs[4]:
         for g, r in all_results.items():
-            st.markdown(f"#### 그룹: {g}")
+            st.markdown(f"#### Group: {g}")
             Si = r["Si"]
 
             fig, ax = plt.subplots(figsize=(10, 5))
-            colors = plt.cm.Set3(np.linspace(0, 1, len(labels)))
-            for i, lab in enumerate(labels):
+            colors = plt.cm.Set3(np.linspace(0, 1, len(labels_en)))
+            for i, lab in enumerate(labels_en):
                 L, M, U = Si[i]
                 ax.plot([L, M, U], [0, 1, 0], marker="o", label=lab, color=colors[i])
             ax.set_xlabel("Weight")
@@ -578,30 +555,28 @@ if st.button("🚀 분석 시작", type="primary"):
             ax.set_title("Fuzzy Membership Functions")
             ax.grid(True, alpha=0.3)
             ax.legend()
-            enable_korean_for_axes(ax)
             st.pyplot(fig)
 
             fig2, ax2 = plt.subplots(figsize=(8, 4))
-            x = np.arange(len(labels))
+            x = np.arange(len(labels_en))
             w1 = r["ahp_w"]
             w2 = r["w_fuzzy"]
             ax2.bar(x - 0.2, w1, width=0.4, label="AHP")
-            ax2.bar(x + 0.2, w2, width=0.4, label="Fuzzy")
+            ax2.bar(x + 0.2, w2, width=0.4, label="Fuzzy AHP")
             ax2.set_xticks(x)
-            ax2.set_xticklabels(labels)
+            ax2.set_xticklabels(labels_en)
             ax2.set_ylabel("Weight")
             ax2.set_title("AHP vs Fuzzy AHP Weights")
             ax2.grid(True, axis="y", alpha=0.3)
             ax2.legend()
-            enable_korean_for_axes(ax2)
             st.pyplot(fig2)
 
-    # 6) 모형간 t-검정 (AHP vs Fuzzy)
+    # 6) 모형간 t-검정
     ttest_rows = []
     with tabs[5]:
-        st.markdown("### 🔎 요인별 AHP vs Fuzzy t-검정 (대응표본)")
+        st.markdown("### AHP vs Fuzzy: Paired t-test")
         st.write(
-            f"각 그룹별로 AHP 가중치와 Fuzzy 가중치 간 차이를 대응표본 t-test로 검정하고, 유의수준 α={alpha_t:.2f} 기준으로 결과를 제시합니다.[web:57][web:151]"
+            f"AHP 가중치와 Fuzzy 가중치 간 차이를 대응표본 t-test로 검정합니다 (α={alpha_t:.2f}).[web:186]"
         )
 
         for g, r in all_results.items():
@@ -623,22 +598,19 @@ if st.button("🚀 분석 시작", type="primary"):
             ttest_df.style.format({"t-통계량": "{:.4f}", "p-value": "{:.4f}"}),
             use_container_width=True,
         )
-        st.caption(
-            "가설: H0 - AHP 가중치와 Fuzzy 가중치의 평균 차이는 0이다. "
-            "H1 - 두 가중치의 평균이 서로 다르다(양측 검정).[web:57][web:151]"
-        )
 
-    # 7) 요인간 유의성 검정
+    # 7) 요인간 유의성
     factor_test_df = pd.DataFrame(factor_tests)
     with tabs[6]:
-        st.markdown("### 📌 요인간 통계적 유의성 검정 (Fuzzy 가중치 기준)")
+        st.markdown("### Factor-wise Significance Test (Fuzzy Weights)")
         st.write(
-            "요인 수가 2개이면 대응표본 t-검정, 3개 이상이면 Friedman 검정을 사용하여 "
-            "요인 간 가중치가 통계적으로 동일한지 검정합니다.[web:145][web:148][web:153]"
+            "If the number of factors is 2, a paired t-test is applied; "
+            "if 3 or more, the Friedman test is used.[web:186]"
         )
 
-        display_df = factor_test_df[["Group", "method", "stat", "pvalue", "alpha", "significant", "n_experts", "n_factors"]]
-        display_df = display_df.rename(
+        display_df = factor_test_df[
+            ["Group", "method", "stat", "pvalue", "alpha", "significant", "n_experts", "n_factors"]
+        ].rename(
             columns={
                 "Group": "그룹",
                 "method": "검정방법",
@@ -651,42 +623,32 @@ if st.button("🚀 분석 시작", type="primary"):
             }
         )
         st.dataframe(
-            display_df.style.format({"통계량": "{:.4f}", "p-value": "{:.44f}", "α": "{:.2f}"}),
+            display_df.style.format({"통계량": "{:.4f}", "p-value": "{:.4f}", "α": "{:.2f}"}),
             use_container_width=True,
         )
 
-        st.caption(
-            "- paired_t_test: 요인 2개인 경우 대응 t-검정 (H0: 두 요인 가중치 평균이 같다).\n"
-            "- friedman_test: 요인 3개 이상인 경우 Friedman 검정 (H0: 모든 요인 가중치 분포가 같다).[web:145][web:148][web:153]"
-        )
-
-    # 8) 엑셀 저장 탭 (로우 데이터 + 전체 결과)
+    # 8) 엑셀 저장
     with tabs[7]:
         st.markdown("### 💾 분석 결과 엑셀 저장 (로우 데이터 포함)")
 
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer) as writer:
-            # 1. 원본 데이터
             df.to_excel(writer, sheet_name="원본데이터", index=False)
-
-            # 2. 일관성 검증
             cons_df.to_excel(writer, sheet_name="일관성검증", index=False)
 
-            # 3. 그룹별 기하평균 행렬
             for g, r in all_results.items():
                 sheet_name_mat = f"행렬_{g}"[:31]
                 mat_df = pd.DataFrame(
                     r["matrix"],
-                    index=labels,
-                    columns=labels
+                    index=labels_kr,
+                    columns=labels_kr
                 )
                 mat_df.to_excel(writer, sheet_name=sheet_name_mat)
 
-            # 4. 그룹별 AHP 결과
             ahp_results = []
             for g, r in all_results.items():
                 rank_ahp = pd.Series(r["ahp_w"]).rank(ascending=False, method="min").astype(int)
-                for i, lab in enumerate(labels):
+                for i, lab in enumerate(labels_kr):
                     ahp_results.append({
                         "그룹": g,
                         "요인": lab,
@@ -699,12 +661,11 @@ if st.button("🚀 분석 시작", type="primary"):
             ahp_df = pd.DataFrame(ahp_results)
             ahp_df.to_excel(writer, sheet_name="AHP결과", index=False)
 
-            # 5. 그룹별 Fuzzy 결과 (Si 상세)
             fuzzy_results = []
             for g, r in all_results.items():
                 Si = r["Si"]
                 rank_fuzzy = pd.Series(r["w_fuzzy"]).rank(ascending=False, method="min").astype(int)
-                for i, lab in enumerate(labels):
+                for i, lab in enumerate(labels_kr):
                     fuzzy_results.append({
                         "그룹": g,
                         "요인": lab,
@@ -719,18 +680,13 @@ if st.button("🚀 분석 시작", type="primary"):
             fuzzy_df = pd.DataFrame(fuzzy_results)
             fuzzy_df.to_excel(writer, sheet_name="Fuzzy결과", index=False)
 
-            # 6. 비교 분석
             for g, comp in comp_all.items():
                 sheet_name = f"비교_{g}"[:31]
                 comp.to_excel(writer, sheet_name=sheet_name, index=False)
 
-            # 7. 모형간 t-검정 결과
             ttest_df.to_excel(writer, sheet_name="모형간_t검정", index=False)
-
-            # 8. 요인간 유의성 검정 결과
             factor_test_df.to_excel(writer, sheet_name="요인간_유의성", index=False)
 
-            # 9. 분석 설정 정보
             config_data = {
                 "설정항목": [
                     "비퍼지화 방법",
@@ -741,7 +697,9 @@ if st.button("🚀 분석 시작", type="primary"):
                     "요인간 유의수준",
                     "분석 대상 요인 수",
                     "쌍대비교 개수",
-                    "요인 라벨",
+                    "요인 라벨(한글)",
+                    "요인 라벨(영문)",
+                    "업로드 파일 시트명",
                 ],
                 "값": [
                     defuzz_disp,
@@ -752,31 +710,20 @@ if st.button("🚀 분석 시작", type="primary"):
                     alpha_factor,
                     n_factor,
                     n_comp,
-                    ", ".join(labels),
+                    ", ".join(labels_kr),
+                    ", ".join(labels_en),
+                    first_sheet_name,
                 ],
             }
             config_df = pd.DataFrame(config_data)
             config_df.to_excel(writer, sheet_name="분석설정", index=False)
 
+        # 다운로드 파일명: FAHP_result_(시트명).xlsx
+        output_filename = f"FAHP_result_{first_sheet_name}.xlsx"
+
         st.download_button(
             label="📥 전체 결과 엑셀 다운로드 (로우데이터 포함)",
             data=buffer.getvalue(),
-            file_name="fuzzy_ahp_full_result.xlsx",
+            file_name=output_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-        st.markdown("""
-        **📊 엑셀 파일 구성**
-
-        | 시트명 | 내용 |
-        |--------|------|
-        | 원본데이터 | 업로드한 원본 로우 데이터 (모든 응답자) |
-        | 일관성검증 | 각 응답자별 CR 보정 전/후 및 일관성 판정 |
-        | 행렬_[그룹명] | 그룹별 기하평균 쌍대비교 행렬 |
-        | AHP결과 | 각 요인별 AHP 가중치, 순위, CR 통계 |
-        | Fuzzy결과 | 각 요인별 Fuzzy Si·Crisp·가중치·순위 |
-        | 비교_[그룹명] | AHP vs Fuzzy 가중치 및 순위 변동 |
-        | 모형간_t검정 | AHP vs Fuzzy 대응 t-검정 결과 |
-        | 요인간_유의성 | 요인간 t/Friedman 검정 결과 |
-        | 분석설정 | 분석에 사용된 모든 파라미터 및 설정값 |
-        """)
