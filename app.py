@@ -7,7 +7,6 @@ import io
 import warnings
 from datetime import datetime
 
-from openpyxl.styles import numbers
 from openpyxl.chart import LineChart, Reference
 
 warnings.filterwarnings("ignore")
@@ -300,7 +299,6 @@ def test_group_significance(all_results, groups, labels_kr, p_threshold=0.05):
 # 6. 삼각 퍼지 멤버십 함수 (그래프용)
 # -----------------------------
 def triangular_membership(x, a, b, c):
-    """표준 삼각 퍼지 멤버십 함수 a <= b <= c 가 되도록 정렬."""
     a, b, c = sorted([a, b, c])
     y = np.zeros_like(x, dtype=float)
 
@@ -417,7 +415,8 @@ if not file:
     st.info("👆 Excel 파일을 업로드하면 분석을 시작할 수 있습니다.")
     st.stop()
 
-excel_file = pd.ExcelFile(file)[web:409]
+# Excel 시트명 읽기[web:364][web:409]
+excel_file = pd.ExcelFile(file)
 sheet_name_used = excel_file.sheet_names[0]
 df = pd.read_excel(excel_file, sheet_name=sheet_name_used)
 
