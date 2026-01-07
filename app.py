@@ -415,7 +415,7 @@ if not file:
     st.info("👆 Excel 파일을 업로드하면 분석을 시작할 수 있습니다.")
     st.stop()
 
-# 업로드한 엑셀의 시트명 가져오기 (첫 시트 기준) [web:409]
+# 업로드한 엑셀의 시트명 가져오기 (첫 시트 기준)[web:409]
 excel_file = pd.ExcelFile(file)
 sheet_name_used = excel_file.sheet_names[0]
 df = pd.read_excel(excel_file, sheet_name=sheet_name_used)
@@ -442,6 +442,9 @@ if len(index_set) == n_factor:
     labels_kr = [f"요인{i}" for i in sorted(index_set)]
 else:
     labels_kr = [f"요인{i+1}" for i in range(n_factor)]
+
+# 영어 범례용 라벨
+labels_en = [f"Factor{i+1}" for i in range(len(labels_kr))]
 
 has_group = df[type_col].notna().any()
 groups = df[type_col].dropna().unique() if has_group else ["All"]
@@ -608,25 +611,37 @@ if st.button("🚀 분석 시작", type="primary"):
             st.subheader("Fuzzy AHP 최종 판단행렬")
             st.dataframe(style3(fuzzy_mat_df), use_container_width=True)
 
-            # ---- 삼각퍼지 그래프 (수정 버전) ----
-            st.subheader("삼각퍼지 그래프 (Si Triangular Fuzzy Numbers)")
+            # ---- 삼각퍼지 그래프 (한 그래프에 모든 요인, 범례 영어) ----
+            st.subheader("Triangular Fuzzy Numbers (All Factors)")
             Si = r["Si"]
-            for fi, lab in enumerate(labels_kr):
+
+            a_list, b_list, c_list = [], [], []
+            for fi in range(len(labels_kr)):
                 l, m, u = Si[fi]
                 a, b, c = sorted([float(l), float(m), float(u)])
+                a_list.append(a)
+                b_list.append(b)
+                c_list.append(c)
+
+            global_a = min(a_list)
+            global_c = max(c_list)
+            x = np.linspace(global_a, global_c, 400)
+
+            fig, ax = plt.subplots()
+            for fi, lab_en in enumerate(labels_en):
+                a, b, c = sorted([a_list[fi], b_list[fi], c_list[fi]])
                 if c == a:
                     continue
-                x = np.linspace(a, c, 200)
                 y = triangular_membership(x, a, b, c)
+                ax.plot(x, y, label=lab_en)
 
-                fig, ax = plt.subplots()
-                ax.plot(x, y, label=f"{lab}")
-                ax.set_title(f"{lab} (Group: {g})")
-                ax.set_xlabel("Value")
-                ax.set_ylabel("Membership")
-                ax.set_ylim(0, 1.05)
-                ax.grid(True, alpha=0.3)
-                st.pyplot(fig)
+            ax.set_title(f"Triangular Fuzzy Numbers (Group: {g})")
+            ax.set_xlabel("Value")
+            ax.set_ylabel("Membership")
+            ax.set_ylim(0, 1.05)
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc="best")
+            st.pyplot(fig)
 
     with tabs[2]:
         st.subheader("AHP 결과")
@@ -677,7 +692,7 @@ if st.button("🚀 분석 시작", type="primary"):
             for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
                 for cell in row:
                     if isinstance(cell.value, (int, float)):
-                        cell.number_format = "0.000"
+                        cell.number_format = "0.000"[web:373]
 
         def create_excel_report():
             out = io.BytesIO()
@@ -766,34 +781,56 @@ if st.button("🚀 분석 시작", type="primary"):
                     ws = wb[sheet_name]
                     apply_number_format_000(ws)
 
-                # Fuzzy TFN 그래프용 데이터 + 차트 시트 수정
+                # Fuzzy TFN 그래프용 데이터 + 차트 시트 (모든 요인을 한 그래프에, 범례 영어)[web:371]
                 chart_sheet = wb.create_sheet("Fuzzy_그래프_시트")
-                chart_sheet.append(["x", "membership"])
+                chart_sheet.append(["x"] + labels_en)
 
                 first_group = list(all_results.keys())[0]
-                first_Si = all_results[first_group]["Si"][0]  # 요인1
-                l, m, u = float(first_Si[0]), float(first_Si[1]), float(first_Si[2])
-                a, b, c = sorted([l, m, u])
-                chart_sheet.append([a, 0])
-                chart_sheet.append([b, 1])
-                chart_sheet.append([c, 0])
+                Si0 = all_results[first_group]["Si"]
+
+                abc_list = []
+                for fi in range(len(labels_en)):
+                    l, m, u = Si0[fi]
+                    a, b, c = sorted([float(l), float(m), float(u)])
+                    abc_list.append((a, b, c))
+                global_a = min(a for a, b, c in abc_list)
+                global_c = max(c for a, b, c in abc_list)
+
+                x_vals = np.linspace(global_a, global_c, 50)
+
+                for xv in x_vals:
+                    row_vals = [float(xv)]
+                    for (a, b, c) in abc_list:
+                        yv = float(triangular_membership(np.array([xv]), a, b, c)[0])
+                        row_vals.append(yv)
+                    chart_sheet.append(row_vals)
 
                 chart = LineChart()
-                chart.title = "요인1 Triangular Fuzzy Number"
+                chart.title = "Triangular Fuzzy Numbers (All Factors)"
                 chart.y_axis.title = "Membership"
                 chart.x_axis.title = "Value"
 
-                data = Reference(chart_sheet, min_col=2, min_row=1, max_row=4)
-                cats = Reference(chart_sheet, min_col=1, min_row=2, max_row=4)
+                data = Reference(
+                    chart_sheet,
+                    min_col=2,
+                    min_row=1,
+                    max_col=1 + len(labels_en),
+                    max_row=1 + len(x_vals),
+                )
+                cats = Reference(
+                    chart_sheet,
+                    min_col=1,
+                    min_row=2,
+                    max_row=1 + len(x_vals),
+                )
                 chart.add_data(data, titles_from_data=True)
                 chart.set_categories(cats)
-                chart_sheet.add_chart(chart, "E2")
+                chart_sheet.add_chart(chart, "H2")
 
             out.seek(0)
             return out.getvalue()
 
         excel_bytes = create_excel_report()
-        # 결과 파일명에 시트명 포함
         out_name = f"{sheet_name_used}_FAHP_분석결과_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         st.download_button(
             "📥 분석 결과 다운로드 (Excel)",
