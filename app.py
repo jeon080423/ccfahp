@@ -15,11 +15,7 @@ st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_
 # 0. 시각화 한글 폰트: 그래프에만 적용
 # -----------------------------
 def enable_korean_for_axes(ax):
-    """
-    이 함수가 호출된 축(ax)에 한글 폰트를 적용.
-    - Windows 에서는 'Malgun Gothic' 사용을 시도.
-    - 폰트가 없으면 기본 폰트 그대로 사용.
-    """
+    """그래프 축/범례에만 한글 폰트 적용 (윈도우: Malgun Gothic)."""
     try:
         for label in (ax.get_xticklabels() + ax.get_yticklabels()):
             label.set_fontfamily("Malgun Gothic")
@@ -288,7 +284,7 @@ with st.sidebar:
     cr_th = st.slider("CR 허용 임계값", 0.0, 0.2, 0.1, 0.01)
     alpha = st.slider("CR 보정 강도 (alpha)", 0.1, 0.5, 0.3, 0.05)
     max_iter = st.slider("CR 최대 보정 횟수", 1, 30, 20, 1)
-    alpha_t = st.slider("t-검정 유의수준 (α)", 0.01, 0.20, 0.05, 0.01)
+    alpha_t = st.slider("t-검정 유의수준 (α)", 0.01, 0.20, 0.05, 0.01)  # 기본값 0.05
 
 # --- 샘플 데이터 (1_2 형식 예시) ---
 st.markdown("### 📥 샘플 데이터 (1_2 형식 예시)")
@@ -304,12 +300,12 @@ sample_df = pd.DataFrame(
         "3_4": [3, 5, 2, 5, 7, 3],
     }
 )
-buf = io.BytesIO()
-with pd.ExcelWriter(buf, engine="openpyxl") as w:
+buf_sample = io.BytesIO()
+with pd.ExcelWriter(buf_sample, engine="openpyxl") as w:
     sample_df.to_excel(w, index=False, sheet_name="Sample")
 st.download_button(
     "📄 샘플 다운로드",
-    buf.getvalue(),
+    buf_sample.getvalue(),
     "fuzzy_ahp_sample_1_2.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
@@ -403,12 +399,12 @@ if st.button("🚀 분석 시작", type="primary"):
     st.success("분석 완료")
 
     tabs = st.tabs(
-        ["일관성 검증", "AHP 행렬", "비교 분석", "Fuzzy 상세", "시각화", "t-검정"]
+        ["일관성 검증", "AHP 행렬", "비교 분석", "Fuzzy 상세", "시각화", "t-검정", "엑셀 저장"]
     )
 
     # 1) 일관성
+    cons_df = pd.DataFrame(cons_list)
     with tabs[0]:
-        cons_df = pd.DataFrame(cons_list)
         st.dataframe(cons_df, use_container_width=True)
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -436,6 +432,7 @@ if st.button("🚀 분석 시작", type="primary"):
                 st.metric("일관성", "✅" if r["CR"] <= cr_th else "⚠️")
 
     # 3) 비교 분석
+    comp_all = {}
     with tabs[2]:
         for g, r in all_results.items():
             st.markdown(f"#### 그룹: {g}")
@@ -455,12 +452,14 @@ if st.button("🚀 분석 시작", type="primary"):
                     ),
                 }
             )
+            comp_all[g] = comp
             st.dataframe(
                 comp.style.format({"AHP 가중치": "{:.4f}", "Fuzzy 가중치": "{:.4f}"}),
                 use_container_width=True,
             )
 
     # 4) Fuzzy 상세
+    fuzzy_detail_all = {}
     with tabs[3]:
         for g, r in all_results.items():
             st.markdown(f"#### 그룹: {g}")
@@ -478,6 +477,7 @@ if st.button("🚀 분석 시작", type="primary"):
                     "순위": pd.Series(r["w_fuzzy"]).rank(ascending=False, method="min").astype(int),
                 }
             )
+            fuzzy_detail_all[g] = detail
             st.dataframe(
                 detail.style.format(
                     {
@@ -527,17 +527,16 @@ if st.button("🚀 분석 시작", type="primary"):
             st.pyplot(fig2)
 
     # 6) t-검정 (AHP vs Fuzzy)
+    ttest_rows = []
     with tabs[5]:
         st.markdown("### 🔎 요인별 AHP vs Fuzzy t-검정 (대응표본)")
         st.write(
-            f"각 요인에 대해 AHP 가중치와 Fuzzy 가중치 간 차이를 대응표본 t-test(ttest_rel)로 검정하고, 선택한 유의수준 α={alpha_t:.2f} 기준으로 결과를 제시합니다."
+            f"각 그룹별로 AHP 가중치와 Fuzzy 가중치 간 차이를 대응표본 t-test(ttest_rel)로 검정하고, 유의수준 α={alpha_t:.2f} 기준으로 결과를 제시합니다."
         )
 
-        ttest_rows = []
         for g, r in all_results.items():
             w_ahp = r["ahp_w"]
             w_fuzzy = r["w_fuzzy"]
-            # 두 벡터는 같은 요인에 대한 쌍이므로 대응표본 t검정 수행 [web:57][web:66]
             t_stat, p_val = stats.ttest_rel(w_ahp, w_fuzzy)
             sig = "유의" if p_val < alpha_t else "비유의"
             ttest_rows.append(
@@ -554,8 +553,126 @@ if st.button("🚀 분석 시작", type="primary"):
             ttest_df.style.format({"t-통계량": "{:.4f}", "p-value": "{:.4f}"}),
             use_container_width=True,
         )
-
         st.caption(
             "가설: H0 - AHP 가중치와 Fuzzy 가중치의 평균 차이는 0이다. "
-            "H1 - 두 가중치의 평균이 서로 다르다(양측 검정).[web:57][web:62][web:66]"
+            "H1 - 두 가중치의 평균이 서로 다르다(양측 검정)."
         )
+
+    # 7) 엑셀 저장 탭 (로우 데이터 + 전체 결과)
+    with tabs[6]:
+        st.markdown("### 💾 분석 결과 엑셀 저장 (로우 데이터 포함)")
+
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(
+            buffer,
+            engine="xlsxwriter",
+        ) as writer:
+            # 1. 원본 데이터
+            df.to_excel(writer, sheet_name="원본데이터", index=False)
+
+            # 2. 일관성 검증
+            cons_df.to_excel(writer, sheet_name="일관성검증", index=False)
+
+            # 3. 그룹별 기하평균 행렬
+            for g, r in all_results.items():
+                sheet_name_mat = f"행렬_{g}"[:31]
+                mat_df = pd.DataFrame(
+                    r["matrix"],
+                    index=labels,
+                    columns=labels
+                )
+                mat_df.to_excel(writer, sheet_name=sheet_name_mat)
+
+            # 4. 그룹별 AHP 결과
+            ahp_results = []
+            for g, r in all_results.items():
+                rank_ahp = pd.Series(r["ahp_w"]).rank(ascending=False, method="min").astype(int)
+                for i, lab in enumerate(labels):
+                    ahp_results.append({
+                        "그룹": g,
+                        "요인": lab,
+                        "AHP_가중치": r["ahp_w"][i],
+                        "AHP_순위": rank_ahp[i],
+                        "Lambda_max": r["lam"],
+                        "CI": r["CI"],
+                        "CR": r["CR"],
+                    })
+            ahp_df = pd.DataFrame(ahp_results)
+            ahp_df.to_excel(writer, sheet_name="AHP결과", index=False)
+
+            # 5. 그룹별 Fuzzy 결과 (Si 상세)
+            fuzzy_results = []
+            for g, r in all_results.items():
+                Si = r["Si"]
+                rank_fuzzy = pd.Series(r["w_fuzzy"]).rank(ascending=False, method="min").astype(int)
+                for i, lab in enumerate(labels):
+                    fuzzy_results.append({
+                        "그룹": g,
+                        "요인": lab,
+                        "Si_Lower": Si[i, 0],
+                        "Si_Medium": Si[i, 1],
+                        "Si_Upper": Si[i, 2],
+                        "Crisp_Si": r["crisp_S"][i],
+                        "d_i": r["d_raw"][i],
+                        "Fuzzy_가중치": r["w_fuzzy"][i],
+                        "Fuzzy_순위": rank_fuzzy[i],
+                    })
+            fuzzy_df = pd.DataFrame(fuzzy_results)
+            fuzzy_df.to_excel(writer, sheet_name="Fuzzy결과", index=False)
+
+            # 6. 비교 분석
+            for g, comp in comp_all.items():
+                sheet_name = f"비교_{g}"[:31]
+                comp.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            # 7. t-검정 결과
+            ttest_df.to_excel(writer, sheet_name="t검정결과", index=False)
+
+            # 8. 분석 설정 정보
+            config_data = {
+                "설정항목": [
+                    "비퍼지화 방법",
+                    "CR 임계값",
+                    "CR 보정 강도(alpha)",
+                    "최대 보정 횟수",
+                    "t-검정 유의수준",
+                    "분석 대상 요인 수",
+                    "쌍대비교 개수",
+                    "요인 라벨",
+                ],
+                "값": [
+                    defuzz_disp,
+                    cr_th,
+                    alpha,
+                    max_iter,
+                    alpha_t,
+                    n_factor,
+                    n_comp,
+                    ", ".join(labels),
+                ],
+            }
+            config_df = pd.DataFrame(config_data)
+            config_df.to_excel(writer, sheet_name="분석설정", index=False)
+
+        st.download_button(
+            label="📥 전체 결과 엑셀 다운로드 (로우데이터 포함)",
+            data=buffer.getvalue(),
+            file_name="fuzzy_ahp_full_result.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        st.markdown("---")
+        st.markdown("""
+        **📊 엑셀 파일 구성**
+
+        | 시트명 | 내용 |
+        |--------|------|
+        | 원본데이터 | 업로드한 원본 로우 데이터 (모든 응답자) |
+        | 일관성검증 | 각 응답자별 CR 보정 전/후 및 일관성 판정 |
+        | 행렬_[그룹명] | 그룹별 기하평균 쌍대비교 행렬 |
+        | AHP결과 | 각 요인별 AHP 가중치, 순위, CR 통계 |
+        | Fuzzy결과 | 각 요인별 Si (Fuzzy 수), Crisp 값, 최종 Fuzzy 가중치 |
+        | 비교_[그룹명] | AHP vs Fuzzy 가중치 비교 및 순위 변동 |
+        | t검정결과 | 그룹별 대응표본 t-검정 결과 (p-value 포함) |
+        | 분석설정 | 분석에 사용된 모든 파라미터 및 설정값 |
+        """)
