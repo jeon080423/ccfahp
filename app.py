@@ -19,7 +19,6 @@ if "logged_in" not in st.session_state:
 if "last_login" not in st.session_state:
     st.session_state.last_login = "로그인 이력 없음"
 
-# 고정 계정 정보
 VALID_ID = "shjeon"
 VALID_PW = "@jsh2143033"
 
@@ -41,7 +40,7 @@ FUZZY_SCALE = {
 }
 
 # -----------------------------
-# 2. AHP 관련 함수 (기하평균법 사용)
+# 2. AHP 관련 함수
 # -----------------------------
 def convert_punch_to_matrix(punch_data, n_factors):
     mat = np.ones((n_factors, n_factors))
@@ -98,12 +97,10 @@ def correct_matrix(matrix, threshold=0.1, max_iter=20, alpha=0.3):
                     a_ij = 1.0
                 if ideal_ij <= 0:
                     ideal_ij = 1.0
-
                 log_a = np.log(a_ij)
                 log_ideal = np.log(ideal_ij)
                 log_new = (1 - alpha) * log_a + alpha * log_ideal
                 new_ij = np.exp(log_new)
-
                 mat[i, j] = new_ij
                 mat[j, i] = 1.0 / new_ij
 
@@ -233,7 +230,7 @@ def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
 
 
 # -----------------------------
-# 5. 요인간 통계 검정 함수 (p-value 기준)
+# 5. 요인간 통계 검정 함수
 # -----------------------------
 def test_factor_significance(weights_matrix, p_threshold=0.05):
     n_experts, n_factors = weights_matrix.shape
@@ -317,8 +314,6 @@ with st.sidebar:
     defuzz_method = defuzz_map[defuzz_disp]
 
     cr_th = st.slider("CR 허용 임계값", 0.0, 0.2, 0.1, 0.01)
-
-    # 1. t검정/요인간 유의 수준: p-value 기준 (알파 삭제)
     p_ttest_threshold = st.number_input(
         "모형간 t-검정 기준 p-value", 0.0, 1.0, 0.05, 0.01, format="%.2f"
     )
@@ -389,7 +384,7 @@ if st.button("🚀 분석 시작", type="primary"):
     all_results = {}
     cons_list = []
     factor_tests = []
-    fuzzy_raw_rows = []
+    fuzzy_raw_rows = []   # 응답자별 FuzzyAHP 로우데이터
     ahp_result_rows = []
     fuzzy_result_rows = []
     compare_all_rows = []
@@ -511,7 +506,6 @@ if st.button("🚀 분석 시작", type="primary"):
     fuzzy_result_df = pd.DataFrame(fuzzy_result_rows)
     compare_all_df = pd.DataFrame(compare_all_rows)
 
-    # 화면 표시용: 소수점 3자리
     fmt3 = "{:.3f}"
     def style3(df, cols=None):
         if cols is None:
@@ -571,10 +565,7 @@ if st.button("🚀 분석 시작", type="primary"):
         st.subheader("비교_All (AHP vs Fuzzy)")
         st.dataframe(
             compare_all_df.style.format(
-                {
-                    "AHP_가중치": fmt3,
-                    "Fuzzy_가중치": fmt3,
-                }
+                {"AHP_가중치": fmt3, "Fuzzy_가중치": fmt3}
             ),
             use_container_width=True,
         )
@@ -583,53 +574,42 @@ if st.button("🚀 분석 시작", type="primary"):
         st.dataframe(style3(factor_test_df, factor_test_df.select_dtypes("number").columns), use_container_width=True)
 
     # ---------------------------
-    # 8. 엑셀 저장
+    # 8. 엑셀 저장 (float_format 제거, round 사용)
     # ---------------------------
     with tabs[4]:
         st.markdown("### 📊 분석 결과 엑셀 저장")
 
         def create_excel_report():
-            output = io.BytesIO()
-            # 3. 엑셀 출력도 float_format으로 소수점 3자리 표시[web:341]
-            with pd.ExcelWriter(output, engine="openpyxl", float_format="%.3f") as writer:
-                # 2. 로우데이터 왼쪽에 FuzzyAHP_로우데이터 시트 배치
-                fuzzy_raw_df.to_excel(writer, sheet_name="FuzzyAHP_로우데이터", index=False)
-                raw_data_df.to_excel(writer, sheet_name="원본데이터", index=False)
+            out = io.BytesIO()
+            with pd.ExcelWriter(out, engine="openpyxl") as writer:
+                # 2. FuzzyAHP 로우데이터 시트를 원본데이터 왼쪽에 배치 (먼저 기록)
+                fuzzy_raw_df.round(3).to_excel(writer, sheet_name="FuzzyAHP_로우데이터", index=False)
+                raw_data_df.round(3).to_excel(writer, sheet_name="원본데이터", index=False)
 
-                cons_df.to_excel(writer, sheet_name="일관성검증", index=False)
+                cons_df.round(3).to_excel(writer, sheet_name="일관성검증", index=False)
 
                 g0 = list(all_results.keys())[0]
                 r0 = all_results[g0]
                 mat_df = pd.DataFrame(r0["matrix"], index=labels_kr, columns=labels_kr)
                 fuzzy_mat_df = pd.DataFrame(r0["fuzzy_matrix"], index=labels_kr, columns=labels_kr)
-                mat_df.to_excel(writer, sheet_name="행렬_All_AHP")
-                fuzzy_mat_df.to_excel(writer, sheet_name="행렬_All_Fuzzy")
+                mat_df.round(3).to_excel(writer, sheet_name="행렬_All_AHP")
+                fuzzy_mat_df.round(3).to_excel(writer, sheet_name="행렬_All_Fuzzy")
 
-                ahp_result_df.to_excel(writer, sheet_name="AHP결과", index=False)
-                fuzzy_result_df.to_excel(writer, sheet_name="Fuzzy결과", index=False)
-                compare_all_df.to_excel(writer, sheet_name="비교_All", index=False)
-                factor_test_df.to_excel(writer, sheet_name="요인간_유의성", index=False)
+                ahp_result_df.round(3).to_excel(writer, sheet_name="AHP결과", index=False)
+                fuzzy_result_df.round(3).to_excel(writer, sheet_name="Fuzzy결과", index=False)
+                compare_all_df.round(3).to_excel(writer, sheet_name="비교_All", index=False)
+                factor_test_df.round(3).to_excel(writer, sheet_name="요인간_유의성", index=False)
 
                 setting_df = pd.DataFrame(
                     {
-                        "설정항목": [
-                            "비퍼지화_방법",
-                            "CR_임계값",
-                            "t검정_p기준",
-                            "요인간_p기준",
-                        ],
-                        "값": [
-                            defuzz_method,
-                            cr_th,
-                            p_ttest_threshold,
-                            p_factor_threshold,
-                        ],
+                        "설정항목": ["비퍼지화_방법", "CR_임계값", "t검정_p기준", "요인간_p기준"],
+                        "값": [defuzz_method, cr_th, p_ttest_threshold, p_factor_threshold],
                     }
                 )
                 setting_df.to_excel(writer, sheet_name="분석설정", index=False)
 
-            output.seek(0)
-            return output.getvalue()
+            out.seek(0)
+            return out.getvalue()
 
         excel_bytes = create_excel_report()
         st.download_button(
