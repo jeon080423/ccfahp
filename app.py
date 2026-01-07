@@ -7,10 +7,7 @@ import io
 import warnings
 from datetime import datetime
 
-from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
-from openpyxl.styles import PatternFill, Alignment, Font, Border, Side
-from openpyxl.utils import get_column_letter
 
 warnings.filterwarnings("ignore")
 
@@ -252,7 +249,6 @@ def test_factor_significance(weights_matrix, p_threshold=0.05):
     if n_factors == 2:
         stat, pval = stats.ttest_rel(weights_matrix[:, 0], weights_matrix[:, 1])
         method = "paired_t_test"
-        # F 검정이나 분산 분석으로 대체 가능[web:445]
     else:
         args = [weights_matrix[:, j] for j in range(n_factors)]
         stat, pval = stats.friedmanchisquare(*args)
@@ -324,123 +320,7 @@ def triangular_membership(x, a, b, c):
 
 
 # -----------------------------
-# 7. 행렬_All 시트 출력 함수 (일반AHP + 퍼지AHP)
-# -----------------------------
-def export_to_excel_with_formatting(all_results, labels_kr):
-    """
-    all_results['All']['ahp_matrix'], all_results['All']['fuzzy_matrix']를
-    '행렬_All' 통합 워크북으로 생성.
-    - 가로/세로 레이블: 요인1, 요인2 ...
-    - 대각선: 1 (정수), 회색 음영
-    - 나머지: 소수점 3자리
-    """
-    wb = Workbook()
-    if 'Sheet' in wb.sheetnames:
-        wb.remove(wb['Sheet'])
-
-    n_factors = len(labels_kr)
-
-    diagonal_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
-    border = Border(
-        left=Side(style='thin'),
-        right=Side(style='thin'),
-        top=Side(style='thin'),
-        bottom=Side(style='thin')
-    )
-
-    # ---------- 7-1. 일반 AHP ----------
-    ws_ahp = wb.create_sheet("일반AHP_행렬")
-
-    # 헤더
-    ws_ahp.append([''] + labels_kr)
-
-    for i in range(n_factors):
-        row_data = [labels_kr[i]]
-        for j in range(n_factors):
-            if i == j:
-                row_data.append(1)
-            else:
-                val = all_results["All"]["ahp_matrix"][i, j]
-                row_data.append(round(val, 3))
-        ws_ahp.append(row_data)
-
-    # 서식 적용
-    for col in range(1, n_factors + 2):
-        cell = ws_ahp.cell(row=1, column=col)
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = border
-
-    for row_idx in range(2, n_factors + 2):
-        for col_idx in range(1, n_factors + 2):
-            cell = ws_ahp.cell(row=row_idx, column=col_idx)
-            cell.border = border
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-
-            if col_idx == 1:
-                cell.font = Font(bold=True)
-
-            if col_idx - 1 == row_idx - 2:
-                cell.fill = diagonal_fill
-                cell.number_format = '0'
-            else:
-                if col_idx != 1:
-                    cell.number_format = '0.000'
-
-    ws_ahp.column_dimensions['A'].width = 12
-    for c in range(2, n_factors + 2):
-        ws_ahp.column_dimensions[get_column_letter(c)].width = 12
-
-    # ---------- 7-2. 퍼지 AHP ----------
-    ws_fuzzy = wb.create_sheet("퍼지AHP_행렬")
-
-    ws_fuzzy.append([''] + labels_kr)
-
-    for i in range(n_factors):
-        row_data = [labels_kr[i]]
-        for j in range(n_factors):
-            if i == j:
-                row_data.append(1)
-            else:
-                val = all_results["All"]["fuzzy_matrix"][i, j]
-                row_data.append(round(val, 3))
-        ws_fuzzy.append(row_data)
-
-    for col in range(1, n_factors + 2):
-        cell = ws_fuzzy.cell(row=1, column=col)
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = border
-
-    for row_idx in range(2, n_factors + 2):
-        for col_idx in range(1, n_factors + 2):
-            cell = ws_fuzzy.cell(row=row_idx, column=col_idx)
-            cell.border = border
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-
-            if col_idx == 1:
-                cell.font = Font(bold=True)
-
-            if col_idx - 1 == row_idx - 2:
-                cell.fill = diagonal_fill
-                cell.number_format = '0'
-            else:
-                if col_idx != 1:
-                    cell.number_format = '0.000'
-
-    ws_fuzzy.column_dimensions['A'].width = 12
-    for c in range(2, n_factors + 2):
-        ws_fuzzy.column_dimensions[get_column_letter(c)].width = 12
-
-    # 메모리 버퍼에 저장해서 Streamlit에서 바로 다운로드
-    bio = io.BytesIO()
-    wb.save(bio)
-    bio.seek(0)
-    return bio
-
-
-# -----------------------------
-# 8. 로그인 UI
+# 7. 로그인 UI
 # -----------------------------
 with st.sidebar:
     st.subheader("🔐 로그인")
@@ -469,7 +349,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # -----------------------------
-# 9. 메인 UI
+# 8. 메인 UI
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
 st.markdown("제작: 전상현 / jeon080423@gmail.com")
@@ -484,24 +364,477 @@ with st.sidebar:
         "가중평균 ((l+2m+u)/4)",
     ]
     defuzz_disp = st.selectbox("비퍼지화 방법 (Si 비퍼지화)", options)
+    defuzz_map = {
+        "기하평균 ((l×m×u)^(1/3))": "geometric",
+        "산술평균 ((l+m+u)/3)": "arithmetic",
+        "가중평균 ((l+2m+u)/4)": "weighted",
+    }
+    defuzz_method = defuzz_map[defuzz_disp]
 
-# 여기부터는 기존에 작성하신 업로드/분석/결과표 생성 코드를 그대로 이어 붙이면 된다.
-# 마지막 Excel 다운로드 버튼만 아래처럼 수정해서 사용.
+    cr_th = st.slider("CR 허용 임계값", 0.0, 0.2, 0.1, 0.01)
+    p_ttest_threshold = st.number_input(
+        "모형간 t-검정 기준 p-value", 0.0, 1.0, 0.05, 0.01, format="%.2f"
+    )
+    p_factor_threshold = st.number_input(
+        "요인간 유의성 기준 p-value", 0.0, 1.0, 0.05, 0.01, format="%.2f"
+    )
+    p_group_threshold = st.number_input(
+        "그룹간 유의성 기준 p-value", 0.0, 1.0, 0.05, 0.01, format="%.2f"
+    )
 
-# ====== 예시: 분석 완료 후 all_results, labels_kr가 준비된 상황이라고 가정 ======
-# all_results = {...}
-# labels_kr = ["요인1", "요인2", ...]  # 실제 코드에서 설정
+# -----------------------------
+# 9. 샘플 & 업로드
+# -----------------------------
+st.markdown("### 📥 샘플 데이터 (1_2 형식 예시)")
+sample_df = pd.DataFrame(
+    {
+        "ID": [1, 2, 3, 4, 5, 6],
+        "type": [1, 1, 1, 1, 1, 1],
+        "1_2": [3, 5, 2, -2, -3, -1],
+        "1_3": [5, 7, 4, 3, 5, 2],
+        "1_4": [7, 9, 5, 5, 7, 4],
+        "2_3": [3, 5, 3, 5, 7, 4],
+        "2_4": [5, 7, 4, 7, 9, 6],
+        "3_4": [3, 5, 2, 5, 7, 3],
+    }
+)
+buf_sample = io.BytesIO()
+with pd.ExcelWriter(buf_sample) as w:
+    sample_df.to_excel(w, index=False, sheet_name="Sample")
+st.download_button(
+    "📄 샘플 다운로드",
+    buf_sample.getvalue(),
+    "fuzzy_ahp_sample_1_2.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
 
-if 'all_results' in st.session_state and 'labels_kr' in st.session_state:
-    all_results = st.session_state['all_results']
-    labels_kr = st.session_state['labels_kr']
+st.markdown("### 📤 데이터 업로드")
+file = st.file_uploader("Excel 파일을 업로드하세요", type=["xlsx", "xls"])
 
-    st.subheader("📥 Excel 다운로드")
-    if st.button("행렬_All 엑셀 다운로드"):
-        bio = export_to_excel_with_formatting(all_results, labels_kr)
+if not file:
+    st.info("👆 Excel 파일을 업로드하면 분석을 시작할 수 있습니다.")
+    st.stop()
+
+# Excel 시트명 읽기[web:364][web:409]
+excel_file = pd.ExcelFile(file)
+sheet_name_used = excel_file.sheet_names[0]
+df = pd.read_excel(excel_file, sheet_name=sheet_name_used)
+
+st.success(f"파일 업로드 완료: {len(df)}행 (시트명: {sheet_name_used})")
+with st.expander("📋 데이터 미리보기"):
+    st.dataframe(df.head())
+
+id_col = df.columns[0]
+type_col = df.columns[1]
+comp_cols = df.columns[2:]
+
+n_comp = len(comp_cols)
+n_factor = int((1 + np.sqrt(1 + 8 * n_comp)) / 2)
+
+index_set = set()
+for c in comp_cols:
+    name = str(c)
+    if "_" in name:
+        a, b = name.split("_")
+        index_set.add(int(a))
+        index_set.add(int(b))
+if len(index_set) == n_factor:
+    labels_kr = [f"요인{i}" for i in sorted(index_set)]
+else:
+    labels_kr = [f"요인{i+1}" for i in range(n_factor)]
+
+labels_en = [f"Factor{i+1}" for i in range(len(labels_kr))]
+
+has_group = df[type_col].notna().any()
+groups = df[type_col].dropna().unique() if has_group else ["All"]
+
+# -----------------------------
+# 10. 분석 실행
+# -----------------------------
+if st.button("🚀 분석 시작", type="primary"):
+    all_results = {}
+    cons_list = []
+    factor_tests = []
+    fuzzy_raw_rows = []
+    ahp_result_rows = []
+    fuzzy_result_rows = []
+    compare_all_rows = []
+    raw_data_df = df.copy()
+
+    prog = st.progress(0.0)
+    step = 1.0 / len(groups)
+
+    for gi, g in enumerate(groups):
+        gdf = df[df[type_col] == g] if has_group else df
+
+        matrices = []
+        for _, row in gdf.iterrows():
+            punch = pd.to_numeric(row[comp_cols], errors="coerce").fillna(1).values
+            mat = convert_punch_to_matrix(punch, n_factor)
+            cmat, cr0, cr1, it = correct_matrix(mat, threshold=cr_th, max_iter=20, alpha=0.3)
+
+            cons_list.append(
+                {
+                    "ID": row[id_col],
+                    "Group": g if has_group else "All",
+                    "보정 전 CR": cr0,
+                    "보정 후 CR": cr1,
+                    "보정 횟수": it,
+                    "일관성": "○" if cr1 <= cr_th else "×",
+                }
+            )
+            matrices.append(cmat)
+
+            Si_i, d_i, w_fuzzy_i, crisp_S_i, V_i = fuzzy_ahp_chang_improved(cmat, defuzz_method)
+            row_dict = {"ID": row[id_col], "Group": g if has_group else "All"}
+            for fi, lab in enumerate(labels_kr):
+                row_dict[f"{lab}_Lower"] = Si_i[fi, 0]
+                row_dict[f"{lab}_Medium"] = Si_i[fi, 1]
+                row_dict[f"{lab}_Upper"] = Si_i[fi, 2]
+                row_dict[f"{lab}_Norm"] = w_fuzzy_i[fi]
+            fuzzy_raw_rows.append(row_dict)
+
+        gm = geometric_mean_matrix(matrices)
+        w_ahp, lam, CI, CR = ahp_weights_geometric(gm)
+        Si, d_raw, w_fuzzy, crisp_S, V = fuzzy_ahp_chang_improved(gm, defuzz_method)
+
+        fuzzy_matrix = np.ones_like(gm)
+        for i in range(n_factor):
+            for j in range(n_factor):
+                fuzzy_matrix[i, j] = w_fuzzy[i] / w_fuzzy[j]
+
+        all_results[g] = {
+            "matrix": gm,
+            "fuzzy_matrix": fuzzy_matrix,
+            "ahp_w": w_ahp,
+            "lam": lam,
+            "CI": CI,
+            "CR": CR,
+            "Si": Si,
+            "d_raw": d_raw,
+            "w_fuzzy": w_fuzzy,
+            "crisp_S": crisp_S,
+            "V": V,
+        }
+
+        ahp_rank = pd.Series(w_ahp).rank(ascending=False, method="min").astype(int)
+        for fi, lab in enumerate(labels_kr):
+            ahp_result_rows.append(
+                {
+                    "그룹": g if has_group else "All",
+                    "요인": lab,
+                    "AHP_가중치": w_ahp[fi],
+                    "AHP_순위": int(ahp_rank[fi]),
+                    "lambda_max": lam,
+                    "CI": CI,
+                    "CR": CR,
+                }
+            )
+
+        fuzzy_rank = pd.Series(w_fuzzy).rank(ascending=False, method="min").astype(int)
+        for fi, lab in enumerate(labels_kr):
+            fuzzy_result_rows.append(
+                {
+                    "그룹": g if has_group else "All",
+                    "요인": lab,
+                    "Si_Lower": Si[fi, 0],
+                    "Si_Medium": Si[fi, 1],
+                    "Si_Upper": Si[fi, 2],
+                    "Crisp_Si": crisp_S[fi],
+                    "d_i": d_raw[fi],
+                    "Fuzzy_가중치": w_fuzzy[fi],
+                    "Fuzzy_순위": int(fuzzy_rank[fi]),
+                }
+            )
+
+        diff_rank = fuzzy_rank - ahp_rank
+        for fi, lab in enumerate(labels_kr):
+            compare_all_rows.append(
+                {
+                    "그룹": g if has_group else "All",
+                    "요인": lab,
+                    "AHP_가중치": w_ahp[fi],
+                    "AHP_순위": int(ahp_rank[fi]),
+                    "Fuzzy_가중치": w_fuzzy[fi],
+                    "Fuzzy_순위": int(fuzzy_rank[fi]),
+                    "순위변동": int(diff_rank[fi]),
+                }
+            )
+
+        weights_mat = np.tile(w_fuzzy, (len(gdf), 1))
+        test_res = test_factor_significance(weights_mat, p_threshold=p_factor_threshold)
+        test_res["Group"] = g
+        factor_tests.append(test_res)
+
+        prog.progress((gi + 1) * step)
+
+    st.success("분석 완료")
+
+    cons_df = pd.DataFrame(cons_list)
+    factor_test_df = pd.DataFrame(factor_tests)
+    fuzzy_raw_df = pd.DataFrame(fuzzy_raw_rows)
+    ahp_result_df = pd.DataFrame(ahp_result_rows)
+    fuzzy_result_df = pd.DataFrame(fuzzy_result_rows)
+    compare_all_df = pd.DataFrame(compare_all_rows)
+    group_effect_df = test_group_significance(all_results, groups, labels_kr, p_threshold=p_group_threshold)
+
+    fmt3 = "{:.3f}"
+
+    def style3(df, cols=None):
+        if cols is None:
+            return df.style.format(fmt3)
+        return df.style.format({c: fmt3 for c in cols})
+
+    tabs = st.tabs(
+        [
+            "일관성 검증",
+            "AHP/Fuzzy 행렬 + TFN",
+            "AHP/Fuzzy 결과",
+            "요인/그룹 유의성",
+            "엑셀 저장",
+        ]
+    )
+
+    # ---------------- 표시 탭 ----------------
+    with tabs[0]:
+        st.dataframe(style3(cons_df, cons_df.select_dtypes("number").columns), use_container_width=True)
+
+    with tabs[1]:
+        for g, r in all_results.items():
+            st.markdown(f"### 그룹: {g}")
+            mat_df = pd.DataFrame(r["matrix"], index=labels_kr, columns=labels_kr)
+            fuzzy_mat_df = pd.DataFrame(r["fuzzy_matrix"], index=labels_kr, columns=labels_kr)
+
+            st.subheader("일반 AHP 최종 판단행렬")
+            st.dataframe(style3(mat_df), use_container_width=True)
+            st.subheader("Fuzzy AHP 최종 판단행렬")
+            st.dataframe(style3(fuzzy_mat_df), use_container_width=True)
+
+            # ---- 삼각퍼지 그래프 (한 그래프에 모든 요인, 범례 영어) ----
+            st.subheader("Triangular Fuzzy Numbers (All Factors)")
+            Si = r["Si"]
+
+            a_list, b_list, c_list = [], [], []
+            for fi in range(len(labels_kr)):
+                l, m, u = Si[fi]
+                a, b, c = sorted([float(l), float(m), float(u)])
+                a_list.append(a)
+                b_list.append(b)
+                c_list.append(c)
+
+            global_a = min(a_list)
+            global_c = max(c_list)
+            x = np.linspace(global_a, global_c, 400)
+
+            fig, ax = plt.subplots()
+            for fi, lab_en in enumerate(labels_en):
+                a, b, c = sorted([a_list[fi], b_list[fi], c_list[fi]])
+                if c == a:
+                    continue
+                y = triangular_membership(x, a, b, c)
+                ax.plot(x, y, label=lab_en)
+
+            ax.set_title(f"Triangular Fuzzy Numbers (Group: {g})")
+            ax.set_xlabel("Value")
+            ax.set_ylabel("Membership")
+            ax.set_ylim(0, 1.05)
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc="best")
+            st.pyplot(fig)
+
+    with tabs[2]:
+        st.subheader("AHP 결과")
+        st.dataframe(
+            ahp_result_df.style.format(
+                {
+                    "AHP_가중치": fmt3,
+                    "lambda_max": fmt3,
+                    "CI": fmt3,
+                    "CR": fmt3,
+                }
+            ),
+            use_container_width=True,
+        )
+        st.subheader("Fuzzy 결과")
+        st.dataframe(
+            fuzzy_result_df.style.format(
+                {
+                    "Si_Lower": fmt3,
+                    "Si_Medium": fmt3,
+                    "Si_Upper": fmt3,
+                    "Crisp_Si": fmt3,
+                    "d_i": fmt3,
+                    "Fuzzy_가중치": fmt3,
+                }
+            ),
+            use_container_width=True,
+        )
+        st.subheader("비교_All (AHP vs Fuzzy)")
+        st.dataframe(
+            compare_all_df.style.format(
+                {"AHP_가중치": fmt3, "Fuzzy_가중치": fmt3}
+            ),
+            use_container_width=True,
+        )
+
+    with tabs[3]:
+        st.subheader("요인간 유의성 (그룹 내부)")
+        st.dataframe(style3(factor_test_df, factor_test_df.select_dtypes("number").columns), use_container_width=True)
+        st.subheader("그룹간 유의성 (요인별)")
+        st.dataframe(style3(group_effect_df, group_effect_df.select_dtypes("number").columns), use_container_width=True)
+
+    # ---------------- 엑셀 저장 ----------------
+    with tabs[4]:
+        st.markdown("### 📊 분석 결과 엑셀 저장")
+
+        def apply_number_format_000(ws):
+            for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+                for cell in row:
+                    if isinstance(cell.value, (int, float)):
+                        cell.number_format = "0.000"
+
+        def create_excel_report():
+            out = io.BytesIO()
+            with pd.ExcelWriter(out, engine="openpyxl") as writer:
+                # 1. FuzzyAHP 로우데이터 / 원본데이터
+                fuzzy_raw_df.to_excel(writer, sheet_name="FuzzyAHP_로우데이터", index=False)
+                raw_data_df.to_excel(writer, sheet_name="원본데이터", index=False)
+
+                # 2. 일관성 검증
+                cons_df.to_excel(writer, sheet_name="일관성검증", index=False)
+
+                # 3. 행렬_All (AHP + Fuzzy 위/아래)
+                g0 = list(all_results.keys())[0]
+                r0 = all_results[g0]
+                ahp_mat = pd.DataFrame(r0["matrix"], index=labels_kr, columns=labels_kr)
+                fuzzy_mat = pd.DataFrame(r0["fuzzy_matrix"], index=labels_kr, columns=labels_kr)
+
+                block_top = ahp_mat.copy()
+                block_top.insert(0, "구분", labels_kr)
+
+                block_bottom = fuzzy_mat.copy()
+                block_bottom.insert(0, "구분", labels_kr)
+
+                blank = pd.DataFrame([[""] * block_top.shape[1]])
+
+                out_mat = pd.concat(
+                    [
+                        pd.DataFrame(
+                            [["일반 AHP 최종 판단행렬 (Group: All)"] + [""] * (block_top.shape[1] - 1)]
+                        ),
+                        block_top.reset_index(drop=True),
+                        blank,
+                        pd.DataFrame(
+                            [["Fuzzy AHP 최종 판단행렬 (Group: All)"] + [""] * (block_bottom.shape[1] - 1)]
+                        ),
+                        block_bottom.reset_index(drop=True),
+                    ],
+                    ignore_index=True,
+                )
+                out_mat.to_excel(writer, sheet_name="행렬_All", index=False, header=False)
+
+                # 4. AHP/Fuzzy/비교 결과
+                ahp_result_df.to_excel(writer, sheet_name="AHP결과", index=False)
+                fuzzy_result_df.to_excel(writer, sheet_name="Fuzzy결과", index=False)
+                compare_all_df.to_excel(writer, sheet_name="비교_All", index=False)
+
+                # 5. 요인간 / 그룹간 유의성
+                factor_test_df.to_excel(writer, sheet_name="요인간_유의성", index=False)
+                group_effect_df.to_excel(writer, sheet_name="그룹간_유의성", index=False)
+
+                # 6. 분석 설정
+                setting_df = pd.DataFrame(
+                    {
+                        "설정항목": [
+                            "비퍼지화_방법",
+                            "CR_임계값",
+                            "t검정_p기준",
+                            "요인간_p기준",
+                            "그룹간_p기준",
+                        ],
+                        "값": [
+                            defuzz_method,
+                            cr_th,
+                            p_ttest_threshold,
+                            p_factor_threshold,
+                            p_group_threshold,
+                        ],
+                    }
+                )
+                setting_df.to_excel(writer, sheet_name="분석설정", index=False)
+
+                # ---------- openpyxl 객체에 접근하여 포맷팅/차트 ----------
+                wb = writer.book
+
+                for sheet_name in [
+                    "FuzzyAHP_로우데이터",
+                    "원본데이터",
+                    "일관성검증",
+                    "행렬_All",
+                    "AHP결과",
+                    "Fuzzy결과",
+                    "비교_All",
+                    "요인간_유의성",
+                    "그룹간_유의성",
+                ]:
+                    ws = wb[sheet_name]
+                    apply_number_format_000(ws)
+
+                # Fuzzy TFN 그래프용 데이터 + 차트 시트 (모든 요인을 한 그래프에, 범례 영어)[web:371]
+                chart_sheet = wb.create_sheet("Fuzzy_그래프_시트")
+                chart_sheet.append(["x"] + labels_en)
+
+                first_group = list(all_results.keys())[0]
+                Si0 = all_results[first_group]["Si"]
+
+                abc_list = []
+                for fi in range(len(labels_en)):
+                    l, m, u = Si0[fi]
+                    a, b, c = sorted([float(l), float(m), float(u)])
+                    abc_list.append((a, b, c))
+                global_a = min(a for a, b, c in abc_list)
+                global_c = max(c for a, b, c in abc_list)
+
+                x_vals = np.linspace(global_a, global_c, 50)
+
+                for xv in x_vals:
+                    row_vals = [float(xv)]
+                    for (a, b, c) in abc_list:
+                        yv = float(triangular_membership(np.array([xv]), a, b, c)[0])
+                        row_vals.append(yv)
+                    chart_sheet.append(row_vals)
+
+                chart = LineChart()
+                chart.title = "Triangular Fuzzy Numbers (All Factors)"
+                chart.y_axis.title = "Membership"
+                chart.x_axis.title = "Value"
+
+                data = Reference(
+                    chart_sheet,
+                    min_col=2,
+                    min_row=1,
+                    max_col=1 + len(labels_en),
+                    max_row=1 + len(x_vals),
+                )
+                cats = Reference(
+                    chart_sheet,
+                    min_col=1,
+                    min_row=2,
+                    max_row=1 + len(x_vals),
+                )
+                chart.add_data(data, titles_from_data=True)
+                chart.set_categories(cats)
+                chart_sheet.add_chart(chart, "H2")
+
+            out.seek(0)
+            return out.getvalue()
+
+        excel_bytes = create_excel_report()
+        out_name = f"{sheet_name_used}_FAHP_분석결과_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         st.download_button(
-            label="✅ 행렬_All 다운로드",
-            data=bio,
-            file_name="행렬_All_일반AHP_퍼지AHP.xlsx",
+            "📥 분석 결과 다운로드 (Excel)",
+            data=excel_bytes,
+            file_name=out_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
         )
