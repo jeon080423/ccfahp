@@ -415,8 +415,15 @@ if st.button("🚀 분석 시작", type="primary"):
         w_ahp, lam, CI, CR = ahp_weights_geometric(gm)
         Si, d_raw, w_fuzzy, crisp_S, V = fuzzy_ahp_chang_improved(gm, defuzz_method)
 
+        # Fuzzy AHP 최종 판단행렬 (가중치 비율로 재구성)
+        fuzzy_matrix = np.ones_like(gm)
+        for i in range(n_factor):
+            for j in range(n_factor):
+                fuzzy_matrix[i, j] = w_fuzzy[i] / w_fuzzy[j]
+
         all_results[g] = {
-            "matrix": gm,
+            "matrix": gm,            # 일반 AHP 최종 판단행렬
+            "fuzzy_matrix": fuzzy_matrix,  # Fuzzy AHP에서 유도된 판단행렬
             "ahp_w": w_ahp,
             "lam": lam,
             "CI": CI,
@@ -632,10 +639,11 @@ if st.button("🚀 분석 시작", type="primary"):
         st.markdown("### 💾 분석 결과 엑셀 저장 (로우 데이터 포함)")
 
         buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer) as writer:
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
             df.to_excel(writer, sheet_name="원본데이터", index=False)
             cons_df.to_excel(writer, sheet_name="일관성검증", index=False)
 
+            # --- 그룹별 행렬 시트: 일반 AHP + 한 줄 띄우고 + Fuzzy AHP ---
             for g, r in all_results.items():
                 sheet_name_mat = f"행렬_{g}"[:31]
                 mat_df = pd.DataFrame(
@@ -643,7 +651,55 @@ if st.button("🚀 분석 시작", type="primary"):
                     index=labels_kr,
                     columns=labels_kr
                 )
-                mat_df.to_excel(writer, sheet_name=sheet_name_mat)
+                fuzzy_mat_df = pd.DataFrame(
+                    r["fuzzy_matrix"],
+                    index=labels_kr,
+                    columns=labels_kr
+                )
+
+                # 제목 + 일반 AHP 행렬
+                start_row = 0
+                title_ahp = pd.DataFrame(
+                    {"": [f"일반 AHP 최종 판단행렬 (Group: {g})"]}
+                )
+                title_ahp.to_excel(
+                    writer,
+                    sheet_name=sheet_name_mat,
+                    startrow=start_row,
+                    startcol=0,
+                    header=False,
+                    index=False,
+                )
+                mat_df.to_excel(
+                    writer,
+                    sheet_name=sheet_name_mat,
+                    startrow=start_row + 1,
+                    startcol=0,
+                    index=True,
+                )
+
+                # 한 줄 띄우기
+                start_row = start_row + 1 + len(mat_df) + 1
+
+                # 제목 + Fuzzy AHP 행렬
+                title_fuzzy = pd.DataFrame(
+                    {"": [f"Fuzzy AHP 최종 판단행렬 (Group: {g})"]}
+                )
+                title_fuzzy.to_excel(
+                    writer,
+                    sheet_name=sheet_name_mat,
+                    startrow=start_row,
+                    startcol=0,
+                    header=False,
+                    index=False,
+                )
+                fuzzy_mat_df.to_excel(
+                    writer,
+                    sheet_name=sheet_name_mat,
+                    startrow=start_row + 1,
+                    startcol=0,
+                    index=True,
+                )
 
             ahp_results = []
             for g, r in all_results.items():
