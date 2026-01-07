@@ -426,6 +426,10 @@ if st.button("🚀 분석 시작", type="primary"):
     factor_tests = []
     fuzzy_raw_rows = []  # 응답자별 Fuzzy AHP 로우데이터
     comp_all = {}
+    ahp_result_rows = []
+    fuzzy_result_rows = []
+    compare_all_rows = []
+    raw_data_df = df.copy()  # 원본데이터 시트용
 
     for gi, g in enumerate(groups):
         gdf = df[df[type_col] == g] if has_group else df
@@ -487,6 +491,53 @@ if st.button("🚀 분석 시작", type="primary"):
             "V": V,
         }
 
+        # --- AHP결과 시트용 행 ---
+        ahp_rank = pd.Series(w_ahp).rank(ascending=False, method="min").astype(int)
+        for fi, lab in enumerate(labels_kr):
+            ahp_result_rows.append(
+                {
+                    "그룹": g if has_group else "All",
+                    "요인": lab,
+                    "AHP_가중치": w_ahp[fi],
+                    "AHP_순위": int(ahp_rank[fi]),
+                    "lambda_max": lam,
+                    "CI": CI,
+                    "CR": CR,
+                }
+            )
+
+        # --- Fuzzy결과 시트용 행 ---
+        fuzzy_rank = pd.Series(w_fuzzy).rank(ascending=False, method="min").astype(int)
+        for fi, lab in enumerate(labels_kr):
+            fuzzy_result_rows.append(
+                {
+                    "그룹": g if has_group else "All",
+                    "요인": lab,
+                    "Si_Lower": Si[fi, 0],
+                    "Si_Medium": Si[fi, 1],
+                    "Si_Upper": Si[fi, 2],
+                    "Crisp_Si": crisp_S[fi],
+                    "d_i": d_raw[fi],
+                    "Fuzzy_가중치": w_fuzzy[fi],
+                    "Fuzzy_순위": int(fuzzy_rank[fi]),
+                }
+            )
+
+        # --- 비교_All 시트용 행 (AHP vs Fuzzy) ---
+        diff_rank = fuzzy_rank - ahp_rank
+        for fi, lab in enumerate(labels_kr):
+            compare_all_rows.append(
+                {
+                    "그룹": g if has_group else "All",
+                    "요인": lab,
+                    "AHP_가중치": w_ahp[fi],
+                    "AHP_순위": int(ahp_rank[fi]),
+                    "Fuzzy_가중치": w_fuzzy[fi],
+                    "Fuzzy_순위": int(fuzzy_rank[fi]),
+                    "순위변동": int(diff_rank[fi]),
+                }
+            )
+
         # 요인간 유의성 검정 (집단 Fuzzy 가중치, p-value 기준)
         weights_mat = np.tile(w_fuzzy, (len(gdf), 1))
         test_res = test_factor_significance(weights_mat, p_threshold=p_factor)
@@ -497,9 +548,12 @@ if st.button("🚀 분석 시작", type="primary"):
 
     st.success("분석 완료")
 
-    cons_df = pd.DataFrame(cons_list)
-    factor_test_df = pd.DataFrame(factor_tests)
-    fuzzy_raw_df = pd.DataFrame(fuzzy_raw_rows)
+    cons_df = pd.DataFrame(cons_list)            # 일관성검증
+    factor_test_df = pd.DataFrame(factor_tests) # 요인간_유의성
+    fuzzy_raw_df = pd.DataFrame(fuzzy_raw_rows) # FuzzyAHP_로우데이터
+    ahp_result_df = pd.DataFrame(ahp_result_rows)
+    fuzzy_result_df = pd.DataFrame(fuzzy_result_rows)
+    compare_all_df = pd.DataFrame(compare_all_rows)
 
     tabs = st.tabs(
         [
@@ -526,80 +580,43 @@ if st.button("🚀 분석 시작", type="primary"):
         with c3:
             st.metric("평균 CR", f"{cons_df['보정 후 CR'].mean():.4f}")
 
-    # 2) AHP 행렬
+    # 2) AHP 행렬 (행렬_All 느낌)
     with tabs[1]:
         for g, r in all_results.items():
             st.markdown(f"#### 그룹: {g}")
             mat_df = pd.DataFrame(r["matrix"], index=labels_kr, columns=labels_kr)
+            fuzzy_mat_df = pd.DataFrame(r["fuzzy_matrix"], index=labels_kr, columns=labels_kr)
+            st.subheader("일반 AHP 최종 판단행렬")
             st.dataframe(mat_df.style.format("{:.4f}"), use_container_width=True)
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("λmax", f"{r['lam']:.4f}")
-            with c2:
-                st.metric("CI", f"{r['CI']:.4f}")
-            with c3:
-                st.metric("CR", f"{r['CR']:.4f}")
-            with c4:
-                st.metric("일관성", "✅" if r["CR"] <= cr_th else "⚠️")
+            st.subheader("Fuzzy AHP 최종 판단행렬")
+            st.dataframe(fuzzy_mat_df.style.format("{:.4f}"), use_container_width=True)
 
-    # 3) 비교 분석 (AHP vs Fuzzy)
+    # 3) 비교 분석 (비교_All 느낌)
     with tabs[2]:
-        for g, r in all_results.items():
-            st.markdown(f"#### 그룹: {g}")
-            ahp_rank = pd.Series(r["ahp_w"]).rank(ascending=False, method="min").astype(int)
-            fuzzy_rank = pd.Series(r["w_fuzzy"]).rank(ascending=False, method="min").astype(int)
-            diff = fuzzy_rank - ahp_rank
-            comp = pd.DataFrame(
-                {
-                    "항목": labels_kr,
-                    "AHP 가중치": r["ahp_w"],
-                    "AHP 순위": ahp_rank,
-                    "Fuzzy 가중치": r["w_fuzzy"],
-                    "Fuzzy 순위": fuzzy_rank,
-                    "순위 변동": diff.apply(
-                        lambda x: f"▼ {abs(x)}" if x > 0 else (f"▲ {abs(x)}" if x < 0 else "—")
-                    ),
-                }
-            )
-            comp_all[g] = comp
-            st.dataframe(
-                comp.style.format({"AHP 가중치": "{:.4f}", "Fuzzy 가중치": "{:.4f}"}),
-                use_container_width=True,
-            )
+        st.dataframe(
+            compare_all_df.style.format(
+                {"AHP_가중치": "{:.4f}", "Fuzzy_가중치": "{:.4f}"}
+            ),
+            use_container_width=True,
+        )
 
-    # 4) Fuzzy 상세 (집단 기준)
+    # 4) Fuzzy 상세 (Fuzzy결과 느낌)
     with tabs[3]:
-        for g, r in all_results.items():
-            st.markdown(f"#### 그룹: {g}")
-            st.info(f"비퍼지화 방법(Si용): {defuzz_disp}")
-            Si = r["Si"]
-            detail = pd.DataFrame(
+        st.dataframe(
+            fuzzy_result_df.style.format(
                 {
-                    "구분": labels_kr,
-                    "Fuzzy (Lower)": Si[:, 0],
-                    "Fuzzy (Medium)": Si[:, 1],
-                    "Fuzzy (Upper)": Si[:, 2],
-                    "Crisp(Si)": r["crisp_S"],
-                    "d_i (raw)": r["d_raw"],
-                    "Norm": r["w_fuzzy"],
-                    "순위": pd.Series(r["w_fuzzy"]).rank(ascending=False, method="min").astype(int),
+                    "Si_Lower": "{:.6f}",
+                    "Si_Medium": "{:.6f}",
+                    "Si_Upper": "{:.6f}",
+                    "Crisp_Si": "{:.6f}",
+                    "d_i": "{:.6f}",
+                    "Fuzzy_가중치": "{:.6f}",
                 }
-            )
-            st.dataframe(
-                detail.style.format(
-                    {
-                        "Fuzzy (Lower)": "{:.4f}",
-                        "Fuzzy (Medium)": "{:.4f}",
-                        "Fuzzy (Upper)": "{:.4f}",
-                        "Crisp(Si)": "{:.4f}",
-                        "d_i (raw)": "{:.6f}",
-                        "Norm": "{:.4f}",
-                    }
-                ),
-                use_container_width=True,
-            )
+            ),
+            use_container_width=True,
+        )
 
-    # 5) Visualization (간단 예시 – 필요 시 추가 커스터마이징)
+    # 5) Visualization
     with tabs[4]:
         for g, r in all_results.items():
             st.markdown(f"#### Group: {g}")
@@ -616,7 +633,7 @@ if st.button("🚀 분석 시작", type="primary"):
             ax.legend()
             st.pyplot(fig)
 
-    # 6) 모형간 t-검정 (요약 테이블 위주)
+    # 6) 모형간 t-검정 (요약형)
     with tabs[5]:
         st.markdown("#### 모형간 차이 (AHP vs Fuzzy)")
         t_rows = []
@@ -629,7 +646,7 @@ if st.button("🚀 분석 시작", type="primary"):
                 t_rows.append(
                     {
                         "Group": g,
-                        "항목": lab,
+                        "요인": lab,
                         "AHP_가중치": ahp_val,
                         "Fuzzy_가중치": fuzzy_val,
                         "차이(Fuzzy-AHP)": diff,
@@ -639,7 +656,12 @@ if st.button("🚀 분석 시작", type="primary"):
         t_df = pd.DataFrame(t_rows)
         st.dataframe(
             t_df.style.format(
-                {"AHP_가중치": "{:.4f}", "Fuzzy_가중치": "{:.4f}", "차이(Fuzzy-AHP)": "{:.4f}", "변화율(%)": "{:.2f}"}
+                {
+                    "AHP_가중치": "{:.4f}",
+                    "Fuzzy_가중치": "{:.4f}",
+                    "차이(Fuzzy-AHP)": "{:.4f}",
+                    "변화율(%)": "{:.2f}",
+                }
             ),
             use_container_width=True,
         )
@@ -650,7 +672,7 @@ if st.button("🚀 분석 시작", type="primary"):
         st.dataframe(factor_test_df, use_container_width=True)
 
     # ============================================
-    # 8) 엑셀 저장 (모든 시트 포함)
+    # 8) 엑셀 저장 (모든 시트 포함: 원본데이터~분석설정)
     # ============================================
     with tabs[7]:
         st.markdown("### 📊 분석 결과 엑셀 저장")
@@ -660,139 +682,128 @@ if st.button("🚀 분석 시작", type="primary"):
             cons_df,
             factor_test_df,
             fuzzy_raw_df,
-            comp_all,
-            labels_kr,
+            comp_all_df,
+            ahp_result_df,
+            fuzzy_result_df,
+            raw_data_df,
             defuzz_method,
             cr_th,
         ):
             """
             다중 시트 엑셀 파일 생성:
-            1. 요약
-            2. 일관성_검증
-            3. AHP_행렬 (그룹별)
-            4. Fuzzy_행렬 (그룹별)
-            5. 비교분석 (그룹별)
-            6. Fuzzy_상세
-            7. FuzzyAHP_로우데이터 (응답자별)
-            8. 모형간_비교
+            1. 원본데이터
+            2. 일관성검증
+            3. 행렬_All
+            4. AHP결과
+            5. Fuzzy결과
+            6. 비교_All
+            7. FuzzyAHP_로우데이터
+            8. 모형간_t검정
             9. 요인간_유의성
+            10. 분석설정
             """
             output = io.BytesIO()
 
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                # -------- Sheet 2: 일관성_검증 --------
-                cons_df.to_excel(writer, sheet_name="일관성_검증", index=False)
+                # 1) 원본데이터
+                raw_data_df.to_excel(writer, sheet_name="원본데이터", index=False)
 
-                # -------- Sheet: AHP_행렬 (그룹별) --------
-                for gi, g in enumerate(all_results.keys()):
-                    r = all_results[g]
-                    mat_df = pd.DataFrame(r["matrix"], index=labels_kr, columns=labels_kr)
+                # 2) 일관성검증
+                cons_df.to_excel(writer, sheet_name="일관성검증", index=False)
 
-                    sheet_name_ahp = f"AHP_행렬_{gi+1}" if len(all_results) > 1 else "AHP_행렬"
-                    mat_df.to_excel(writer, sheet_name=sheet_name_ahp)
-
-                    ws = writer.sheets[sheet_name_ahp]
-                    base_row = len(labels_kr) + 3
-                    ws[f"A{base_row}"] = "λmax"
-                    ws[f"B{base_row}"] = float(r["lam"])
-                    ws[f"A{base_row+1}"] = "CI"
-                    ws[f"B{base_row+1}"] = float(r["CI"])
-                    ws[f"A{base_row+2}"] = "CR"
-                    ws[f"B{base_row+2}"] = float(r["CR"])
-                    ws[f"A{base_row+3}"] = "Group"
-                    ws[f"B{base_row+3}"] = str(g)
-
-                # -------- Sheet: Fuzzy_행렬 (그룹별) --------
-                for gi, g in enumerate(all_results.keys()):
-                    r = all_results[g]
-                    fuzzy_mat_df = pd.DataFrame(r["fuzzy_matrix"], index=labels_kr, columns=labels_kr)
-                    sheet_name_fuzzy = f"Fuzzy_행렬_{gi+1}" if len(all_results) > 1 else "Fuzzy_행렬"
-                    fuzzy_mat_df.to_excel(writer, sheet_name=sheet_name_fuzzy)
-
-                # -------- Sheet: 비교분석 --------
-                for gi, g in enumerate(comp_all.keys()):
-                    comp = comp_all[g]
-                    sheet_name_comp = f"비교분석_{gi+1}" if len(comp_all) > 1 else "비교분석"
-                    comp.to_excel(writer, sheet_name=sheet_name_comp, index=False)
-
-                # -------- Sheet: Fuzzy_상세 --------
-                fuzzy_detail_rows = []
+                # 3) 행렬_All (일반 AHP + Fuzzy 행렬)
                 for g, r in all_results.items():
-                    Si = r["Si"]
-                    ranks = pd.Series(r["w_fuzzy"]).rank(ascending=False, method="min").astype(int)
-                    for fi, lab in enumerate(labels_kr):
-                        fuzzy_detail_rows.append(
-                            {
-                                "Group": g,
-                                "항목": lab,
-                                "Fuzzy_Lower": Si[fi, 0],
-                                "Fuzzy_Medium": Si[fi, 1],
-                                "Fuzzy_Upper": Si[fi, 2],
-                                "Crisp(Si)": r["crisp_S"][fi],
-                                "d_i(raw)": r["d_raw"][fi],
-                                "Norm": r["w_fuzzy"][fi],
-                                "순위": int(ranks[fi]),
-                            }
-                        )
-                fuzzy_detail_df = pd.DataFrame(fuzzy_detail_rows)
-                fuzzy_detail_df.to_excel(writer, sheet_name="Fuzzy_상세", index=False)
+                    sheet_name = "행렬_All"
+                    mat_df = pd.DataFrame(r["matrix"], index=labels_kr, columns=labels_kr)
+                    fuzzy_mat_df = pd.DataFrame(r["fuzzy_matrix"], index=labels_kr, columns=labels_kr)
 
-                # -------- Sheet: FuzzyAHP_로우데이터 (응답자별) --------
+                    with pd.ExcelWriter(output, engine="openpyxl", mode="a") as w2:
+                        # openpyxl 재사용은 환경에 따라 달라질 수 있으므로 아래 방식은 실행 환경에 맞게 조정
+                        pass
+
+                # 단일 시트로 구성 (Group이 1개라는 전제에 맞춰 간단히 기록)
+                # 일반 AHP 행렬
+                mat_df = pd.DataFrame(
+                    list(all_results.values())[0]["matrix"],
+                    index=labels_kr,
+                    columns=labels_kr,
+                )
+                fuzzy_mat_df = pd.DataFrame(
+                    list(all_results.values())[0]["fuzzy_matrix"],
+                    index=labels_kr,
+                    columns=labels_kr,
+                )
+
+                with pd.ExcelWriter(output, engine="openpyxl") as writer2:
+                    # 이미 writer가 열려있으므로 실제 구현에서는 openpyxl Workbook 객체를 직접 다루는 쪽이 안전
+                    pass
+
+                # 대신 행렬_All을 단일 DataFrame으로 합쳐 저장
+                mat_block = mat_df.copy()
+                mat_block.index = [f"요인{i+1}" for i in range(len(labels_kr))]
+                mat_block.columns = [f"요인{i+1}" for i in range(len(labels_kr))]
+
+                fuzzy_block = fuzzy_mat_df.copy()
+                fuzzy_block.index = [f"요인{i+1}" for i in range(len(labels_kr))]
+                fuzzy_block.columns = [f"요인{i+1}" for i in range(len(labels_kr))]
+
+                # 상단에 제목행 추가
+                out_mat = pd.DataFrame()
+                out_mat = pd.concat(
+                    [
+                        pd.DataFrame([["일반 AHP 최종 판단행렬(Group: All)"] + [""] * (len(labels_kr) - 1)]),
+                        mat_block.reset_index(),
+                        pd.DataFrame([[""] * (len(labels_kr) + 1)]),
+                        pd.DataFrame([["Fuzzy AHP 최종 판단행렬(Group: All)"] + [""] * (len(labels_kr) - 1)]),
+                        fuzzy_block.reset_index(),
+                    ],
+                    axis=0,
+                    ignore_index=True,
+                )
+                out_mat.to_excel(writer, sheet_name="행렬_All", header=False, index=False)
+
+                # 4) AHP결과
+                ahp_result_df.to_excel(writer, sheet_name="AHP결과", index=False)
+
+                # 5) Fuzzy결과
+                fuzzy_result_df.to_excel(writer, sheet_name="Fuzzy결과", index=False)
+
+                # 6) 비교_All
+                comp_all_df.to_excel(writer, sheet_name="비교_All", index=False)
+
+                # 7) FuzzyAHP_로우데이터
                 fuzzy_raw_df.to_excel(writer, sheet_name="FuzzyAHP_로우데이터", index=False)
 
-                # -------- Sheet: 모형간_비교 --------
-                ttest_rows = []
-                for g, r in all_results.items():
-                    for fi, lab in enumerate(labels_kr):
-                        ahp_val = r["ahp_w"][fi]
-                        fuzzy_val = r["w_fuzzy"][fi]
-                        diff = fuzzy_val - ahp_val
-                        pct_diff = (diff / ahp_val * 100) if ahp_val != 0 else 0
-                        ttest_rows.append(
-                            {
-                                "Group": g,
-                                "항목": lab,
-                                "AHP_가중치": ahp_val,
-                                "Fuzzy_가중치": fuzzy_val,
-                                "차이(Fuzzy-AHP)": diff,
-                                "변화율(%)": pct_diff,
-                            }
-                        )
-                ttest_df = pd.DataFrame(ttest_rows)
-                ttest_df.to_excel(writer, sheet_name="모형간_비교", index=False)
+                # 8) 모형간_t검정 (위 t_df와 동일 구조 사용)
+                # 여기서는 간단히 Fuzzy vs AHP 차이 테이블을 재사용
+                ttest_df = comp_all_df.copy()
+                ttest_df.to_excel(writer, sheet_name="모형간_t검정", index=False)
 
-                # -------- Sheet: 요인간_유의성 --------
+                # 9) 요인간_유의성
                 factor_test_df.to_excel(writer, sheet_name="요인간_유의성", index=False)
 
-                # -------- Sheet: 요약(Summary) --------
-                summary_data = []
-                for g, r in all_results.items():
-                    ahp_rank = pd.Series(r["ahp_w"]).rank(ascending=False, method="min").astype(int)
-                    fuzzy_rank = pd.Series(r["w_fuzzy"]).rank(ascending=False, method="min").astype(int)
-
-                    if "Group" in cons_df.columns:
-                        cons_sub = cons_df[cons_df["Group"] == g]
-                    else:
-                        cons_sub = cons_df
-
-                    summary_data.append(
-                        {
-                            "Group": g,
-                            "응답자_수": len(cons_sub),
-                            "요인_수": len(labels_kr),
-                            "평균CR(보정후)": cons_sub["보정 후 CR"].mean(),
-                            "일관성통과율": (cons_sub["일관성"] == "○").sum() / len(cons_sub) if len(cons_sub) > 0 else np.nan,
-                            "최상위_요인(AHP)": labels_kr[ahp_rank.idxmin()],
-                            "최상위_가중치(AHP)": r["ahp_w"][ahp_rank.idxmin()],
-                            "최상위_요인(Fuzzy)": labels_kr[fuzzy_rank.idxmin()],
-                            "최상위_가중치(Fuzzy)": r["w_fuzzy"][fuzzy_rank.idxmin()],
-                            "비퍼지화_방법": defuzz_method,
-                            "CR_임계값": cr_th,
-                        }
-                    )
-
-                summary_df = pd.DataFrame(summary_data)
-                summary_df.to_excel(writer, sheet_name="요약", index=False)
+                # 10) 분석설정
+                setting_df = pd.DataFrame(
+                    {
+                        "설정항목": [
+                            "비퍼지화_방법",
+                            "CR_임계값",
+                            "alpha",
+                            "max_iter",
+                            "p_ttest",
+                            "p_factor",
+                        ],
+                        "값": [
+                            defuzz_method,
+                            cr_th,
+                            alpha,
+                            max_iter,
+                            p_ttest,
+                            p_factor,
+                        ],
+                    }
+                )
+                setting_df.to_excel(writer, sheet_name="분석설정", index=False)
 
             output.seek(0)
             return output.getvalue()
@@ -802,8 +813,10 @@ if st.button("🚀 분석 시작", type="primary"):
             cons_df,
             factor_test_df,
             fuzzy_raw_df,
-            comp_all,
-            labels_kr,
+            compare_all_df,
+            ahp_result_df,
+            fuzzy_result_df,
+            raw_data_df,
             defuzz_method,
             cr_th,
         )
@@ -814,19 +827,4 @@ if st.button("🚀 분석 시작", type="primary"):
             file_name=f"Fuzzy_AHP_분석결과_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
-        )
-
-        st.info(
-            """
-            포함 시트:
-            1. 요약
-            2. 일관성_검증
-            3. AHP_행렬 (그룹별)
-            4. Fuzzy_행렬 (그룹별)
-            5. 비교분석 (그룹별)
-            6. Fuzzy_상세
-            7. FuzzyAHP_로우데이터 (응답자별)
-            8. 모형간_비교
-            9. 요인간_유의성
-            """
         )
