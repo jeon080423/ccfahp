@@ -422,7 +422,7 @@ if st.button("🚀 분석 시작", type="primary"):
                 fuzzy_matrix[i, j] = w_fuzzy[i] / w_fuzzy[j]
 
         all_results[g] = {
-            "matrix": gm,            # 일반 AHP 최종 판단행렬
+            "matrix": gm,                  # 일반 AHP 최종 판단행렬
             "fuzzy_matrix": fuzzy_matrix,  # Fuzzy AHP에서 유도된 판단행렬
             "ahp_w": w_ahp,
             "lam": lam,
@@ -639,7 +639,8 @@ if st.button("🚀 분석 시작", type="primary"):
         st.markdown("### 💾 분석 결과 엑셀 저장 (로우 데이터 포함)")
 
         buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        # engine 지정 제거 → 기본 엔진(openpyxl 등) 사용
+        with pd.ExcelWriter(buffer) as writer:
             df.to_excel(writer, sheet_name="원본데이터", index=False)
             cons_df.to_excel(writer, sheet_name="일관성검증", index=False)
 
