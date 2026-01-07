@@ -346,6 +346,7 @@ with st.sidebar:
 
 if not st.session_state.logged_in:
     st.title("📊 Fuzzy AHP 분석 시스템")
+    st.markdown("제작: 전상현 / jeon080423@gmail.com")
     st.warning("좌측 로그인 후에만 분석 기능을 사용할 수 있습니다.")
     st.stop()
 
@@ -353,6 +354,7 @@ if not st.session_state.logged_in:
 # 8. 메인 UI
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
+st.markdown("제작: 전상현 / jeon080423@gmail.com")
 st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구.")
 
 with st.sidebar:
@@ -415,8 +417,7 @@ if not file:
     st.info("👆 Excel 파일을 업로드하면 분석을 시작할 수 있습니다.")
     st.stop()
 
-# 업로드한 엑셀의 시트명 가져오기 (첫 시트 기준)[web:409]
-excel_file = pd.ExcelFile(file)
+excel_file = pd.ExcelFile(file)[web:409]
 sheet_name_used = excel_file.sheet_names[0]
 df = pd.read_excel(excel_file, sheet_name=sheet_name_used)
 
@@ -443,7 +444,6 @@ if len(index_set) == n_factor:
 else:
     labels_kr = [f"요인{i+1}" for i in range(n_factor)]
 
-# 영어 범례용 라벨
 labels_en = [f"Factor{i+1}" for i in range(len(labels_kr))]
 
 has_group = df[type_col].notna().any()
@@ -692,7 +692,7 @@ if st.button("🚀 분석 시작", type="primary"):
             for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
                 for cell in row:
                     if isinstance(cell.value, (int, float)):
-                        cell.number_format = "0.000"[web:373]
+                        cell.number_format = "0.000"
 
         def create_excel_report():
             out = io.BytesIO()
