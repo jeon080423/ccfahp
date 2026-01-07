@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from scipy import linalg, stats
 import io
 import warnings
-from datetime import datetime  # 최근 로그인 일자 표시용
+from datetime import datetime
 
 warnings.filterwarnings("ignore")
 
@@ -304,23 +304,19 @@ def test_factor_significance(weights_matrix, alpha=0.05):
 with st.sidebar:
     st.subheader("🔐 로그인")
 
-    # 이미 로그인된 상태면 정보만 표시
     if st.session_state.logged_in:
         st.success(f"로그인 완료: {VALID_ID}")
         st.write(f"최근 로그인 일자: {st.session_state.last_login}")
         if st.button("로그아웃"):
             st.session_state.logged_in = False
-            st.experimental_rerun()
     else:
         login_id = st.text_input("아이디", value="", key="login_id")
         login_pw = st.text_input("비밀번호", value="", type="password", key="login_pw")
         if st.button("로그인"):
             if (login_id == VALID_ID) and (login_pw == VALID_PW):
                 st.session_state.logged_in = True
-                # 최근 로그인 일자 저장 (YYYY-MM-DD HH:MM 형식)
                 st.session_state.last_login = datetime.now().strftime("%Y-%m-%d %H:%M")
                 st.success("로그인 성공")
-                st.experimental_rerun()
             else:
                 st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
 
@@ -333,7 +329,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # -----------------------------
-# 7. (이하부터는 로그인 후에만 보이는 메인 분석 UI)
+# 7. (로그인 후 메인 분석 UI)
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
 st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (Geometric Mean Method + 개선된 Chang Extent + 통계 검정).")
@@ -469,8 +465,8 @@ if st.button("🚀 분석 시작", type="primary"):
                 fuzzy_matrix[i, j] = w_fuzzy[i] / w_fuzzy[j]
 
         all_results[g] = {
-            "matrix": gm,                  # 일반 AHP 최종 판단행렬
-            "fuzzy_matrix": fuzzy_matrix,  # Fuzzy AHP에서 유도된 판단행렬
+            "matrix": gm,
+            "fuzzy_matrix": fuzzy_matrix,
             "ahp_w": w_ahp,
             "lam": lam,
             "CI": CI,
@@ -690,7 +686,7 @@ if st.button("🚀 분석 시작", type="primary"):
             df.to_excel(writer, sheet_name="원본데이터", index=False)
             cons_df.to_excel(writer, sheet_name="일관성검증", index=False)
 
-            # --- 그룹별 행렬 시트: 일반 AHP + 한 줄 띄우고 + Fuzzy AHP ---
+            # 그룹별 행렬 시트: 일반 AHP + 한 줄 띄우고 + Fuzzy AHP
             for g, r in all_results.items():
                 sheet_name_mat = f"행렬_{g}"[:31]
                 mat_df = pd.DataFrame(
@@ -704,7 +700,6 @@ if st.button("🚀 분석 시작", type="primary"):
                     columns=labels_kr
                 )
 
-                # 제목 + 일반 AHP 행렬
                 start_row = 0
                 title_ahp = pd.DataFrame(
                     {"": [f"일반 AHP 최종 판단행렬 (Group: {g})"]}
@@ -725,10 +720,8 @@ if st.button("🚀 분석 시작", type="primary"):
                     index=True,
                 )
 
-                # 한 줄 띄우기
                 start_row = start_row + 1 + len(mat_df) + 1
 
-                # 제목 + Fuzzy AHP 행렬
                 title_fuzzy = pd.DataFrame(
                     {"": [f"Fuzzy AHP 최종 판단행렬 (Group: {g})"]}
                 )
@@ -823,7 +816,6 @@ if st.button("🚀 분석 시작", type="primary"):
             config_df = pd.DataFrame(config_data)
             config_df.to_excel(writer, sheet_name="분석설정", index=False)
 
-        # 다운로드 파일명: FAHP_result_(시트명).xlsx
         output_filename = f"FAHP_result_{first_sheet_name}.xlsx"
 
         st.download_button(
