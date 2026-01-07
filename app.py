@@ -301,7 +301,7 @@ sample_df = pd.DataFrame(
     }
 )
 buf_sample = io.BytesIO()
-with pd.ExcelWriter(buf_sample, engine="openpyxl") as w:
+with pd.ExcelWriter(buf_sample) as w:
     sample_df.to_excel(w, index=False, sheet_name="Sample")
 st.download_button(
     "📄 샘플 다운로드",
@@ -563,10 +563,8 @@ if st.button("🚀 분석 시작", type="primary"):
         st.markdown("### 💾 분석 결과 엑셀 저장 (로우 데이터 포함)")
 
         buffer = io.BytesIO()
-        with pd.ExcelWriter(
-            buffer,
-            engine="xlsxwriter",
-        ) as writer:
+        # 기본 엔진(openpyxl)을 사용
+        with pd.ExcelWriter(buffer) as writer:
             # 1. 원본 데이터
             df.to_excel(writer, sheet_name="원본데이터", index=False)
 
@@ -661,7 +659,6 @@ if st.button("🚀 분석 시작", type="primary"):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-        st.markdown("---")
         st.markdown("""
         **📊 엑셀 파일 구성**
 
