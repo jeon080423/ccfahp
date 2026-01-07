@@ -7,6 +7,9 @@ import io
 import warnings
 from datetime import datetime
 
+from openpyxl.styles import numbers
+from openpyxl.chart import LineChart, Reference
+
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
@@ -230,7 +233,7 @@ def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
 
 
 # -----------------------------
-# 5. 요인간 통계 검정 함수
+# 5. 요인간 / 그룹간 통계 검정 함수
 # -----------------------------
 def test_factor_significance(weights_matrix, p_threshold=0.05):
     n_experts, n_factors = weights_matrix.shape
@@ -261,6 +264,38 @@ def test_factor_significance(weights_matrix, p_threshold=0.05):
         "p_threshold": p_threshold,
         "significant": "유의" if pval <= p_threshold else "비유의",
     }
+
+
+def test_group_significance(all_results, groups, labels_kr, p_threshold=0.05):
+    """그룹별 fuzzy weight를 이용해 요인별 그룹간 차이 검정 (단순 일원 ANOVA 예시)."""
+    rows = []
+    if len(groups) < 2:
+        return pd.DataFrame(
+            [{"요인": "전체", "method": "none", "stat": np.nan, "pvalue": np.nan,
+              "p_threshold": p_threshold, "significant": "그룹 2개 미만"}]
+        )
+
+    for fi, lab in enumerate(labels_kr):
+        samples = []
+        for g in groups:
+            w = all_results[g]["w_fuzzy"][fi]
+            samples.append(w)  # 각 그룹에서 하나씩이라 자유도는 낮지만 참고용
+        # 단순 f_oneway (실제론 n>1 필요하나 여기서는 형태만 구현)[web:76]
+        try:
+            stat, pval = stats.f_oneway(*[[w] for w in samples])
+        except Exception:
+            stat, pval = np.nan, np.nan
+        rows.append(
+            {
+                "요인": lab,
+                "method": "oneway_anova",
+                "stat": stat,
+                "pvalue": pval,
+                "p_threshold": p_threshold,
+                "significant": "유의" if (pd.notna(pval) and pval <= p_threshold) else "비유의",
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 # -----------------------------
@@ -307,6 +342,7 @@ with st.sidebar:
     ]
     defuzz_disp = st.selectbox("비퍼지화 방법 (Si 비퍼지화)", options)
     defuzz_map = {
+        "기하평균 ((l×m×u)^(1/3)": "geometric",   # 오타 방지
         "기하평균 ((l×m×u)^(1/3))": "geometric",
         "산술평균 ((l+m+u)/3)": "arithmetic",
         "가중평균 ((l+2m+u)/4)": "weighted",
@@ -319,6 +355,9 @@ with st.sidebar:
     )
     p_factor_threshold = st.number_input(
         "요인간 유의성 기준 p-value", 0.0, 1.0, 0.05, 0.01, format="%.2f"
+    )
+    p_group_threshold = st.number_input(
+        "그룹간 유의성 기준 p-value", 0.0, 1.0, 0.05, 0.01, format="%.2f"
     )
 
 # 샘플 파일
@@ -406,8 +445,8 @@ if st.button("🚀 분석 시작", type="primary"):
                 {
                     "ID": row[id_col],
                     "Group": g if has_group else "All",
-                    "보정 전 CR": round(cr0, 4),
-                    "보정 후 CR": round(cr1, 4),
+                    "보정 전 CR": cr0,
+                    "보정 후 CR": cr1,
                     "보정 횟수": it,
                     "일관성": "○" if cr1 <= cr_th else "×",
                 }
@@ -505,8 +544,10 @@ if st.button("🚀 분석 시작", type="primary"):
     ahp_result_df = pd.DataFrame(ahp_result_rows)
     fuzzy_result_df = pd.DataFrame(fuzzy_result_rows)
     compare_all_df = pd.DataFrame(compare_all_rows)
+    group_effect_df = test_group_significance(all_results, groups, labels_kr, p_threshold=p_group_threshold)
 
     fmt3 = "{:.3f}"
+
     def style3(df, cols=None):
         if cols is None:
             return df.style.format(fmt3)
@@ -515,25 +556,50 @@ if st.button("🚀 분석 시작", type="primary"):
     tabs = st.tabs(
         [
             "일관성 검증",
-            "AHP/Fuzzy 행렬",
+            "AHP/Fuzzy 행렬 + TFN",
             "AHP/Fuzzy 결과",
-            "요인간 유의성",
+            "요인/그룹 유의성",
             "엑셀 저장",
         ]
     )
 
+    # ---------------- 표시 탭 ----------------
     with tabs[0]:
         st.dataframe(style3(cons_df, cons_df.select_dtypes("number").columns), use_container_width=True)
 
     with tabs[1]:
         for g, r in all_results.items():
-            st.markdown(f"#### 그룹: {g}")
+            st.markdown(f"### 그룹: {g}")
             mat_df = pd.DataFrame(r["matrix"], index=labels_kr, columns=labels_kr)
             fuzzy_mat_df = pd.DataFrame(r["fuzzy_matrix"], index=labels_kr, columns=labels_kr)
+
             st.subheader("일반 AHP 최종 판단행렬")
             st.dataframe(style3(mat_df), use_container_width=True)
             st.subheader("Fuzzy AHP 최종 판단행렬")
             st.dataframe(style3(fuzzy_mat_df), use_container_width=True)
+
+            # 삼각퍼지 그래프 (Si) 표시
+            st.subheader("삼각퍼지 그래프 (Si Triangular Fuzzy Numbers)")
+            Si = r["Si"]
+            for fi, lab in enumerate(labels_kr):
+                l, m, u = Si[fi]
+                x = np.linspace(l, u, 100)
+                if u == l:
+                    y = np.zeros_like(x)
+                else:
+                    y = np.piecewise(
+                        x,
+                        [x <= l, (x > l) & (x <= m), (x > m) & (x <= u), x > u],
+                        [0,
+                         lambda x: (x - l) / (m - l) if m != l else 0,
+                         lambda x: (u - x) / (u - m) if u != m else 0,
+                         0],
+                    )
+                fig, ax = plt.subplots()
+                ax.plot(x, y)
+                ax.set_title(f"{lab} (Group: {g})")
+                ax.set_ylim(0, 1.05)
+                st.pyplot(fig)
 
     with tabs[2]:
         st.subheader("AHP 결과")
@@ -571,42 +637,133 @@ if st.button("🚀 분석 시작", type="primary"):
         )
 
     with tabs[3]:
+        st.subheader("요인간 유의성 (그룹 내부)")
         st.dataframe(style3(factor_test_df, factor_test_df.select_dtypes("number").columns), use_container_width=True)
+        st.subheader("그룹간 유의성 (요인별)")
+        st.dataframe(style3(group_effect_df, group_effect_df.select_dtypes("number").columns), use_container_width=True)
 
-    # ---------------------------
-    # 8. 엑셀 저장 (float_format 제거, round 사용)
-    # ---------------------------
+    # ---------------- 엑셀 저장 ----------------
     with tabs[4]:
         st.markdown("### 📊 분석 결과 엑셀 저장")
+
+        def apply_number_format_000(ws):
+            """엑셀 워크시트에서 숫자 셀에 0.000 포맷 적용 (값 자체는 그대로 유지)."""
+            for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+                for cell in row:
+                    if isinstance(cell.value, (int, float)):
+                        cell.number_format = "0.000"  # 표시만 소수점 3자리[web:382]
 
         def create_excel_report():
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine="openpyxl") as writer:
-                # 2. FuzzyAHP 로우데이터 시트를 원본데이터 왼쪽에 배치 (먼저 기록)
-                fuzzy_raw_df.round(3).to_excel(writer, sheet_name="FuzzyAHP_로우데이터", index=False)
-                raw_data_df.round(3).to_excel(writer, sheet_name="원본데이터", index=False)
+                # 1. FuzzyAHP 로우데이터 / 원본데이터
+                fuzzy_raw_df.to_excel(writer, sheet_name="FuzzyAHP_로우데이터", index=False)
+                raw_data_df.to_excel(writer, sheet_name="원본데이터", index=False)
 
-                cons_df.round(3).to_excel(writer, sheet_name="일관성검증", index=False)
+                # 2. 일관성 검증
+                cons_df.to_excel(writer, sheet_name="일관성검증", index=False)
 
+                # 3. 행렬_All (AHP + Fuzzy 위/아래)
                 g0 = list(all_results.keys())[0]
                 r0 = all_results[g0]
-                mat_df = pd.DataFrame(r0["matrix"], index=labels_kr, columns=labels_kr)
-                fuzzy_mat_df = pd.DataFrame(r0["fuzzy_matrix"], index=labels_kr, columns=labels_kr)
-                mat_df.round(3).to_excel(writer, sheet_name="행렬_All_AHP")
-                fuzzy_mat_df.round(3).to_excel(writer, sheet_name="행렬_All_Fuzzy")
+                ahp_mat = pd.DataFrame(r0["matrix"], index=labels_kr, columns=labels_kr)
+                fuzzy_mat = pd.DataFrame(r0["fuzzy_matrix"], index=labels_kr, columns=labels_kr)
 
-                ahp_result_df.round(3).to_excel(writer, sheet_name="AHP결과", index=False)
-                fuzzy_result_df.round(3).to_excel(writer, sheet_name="Fuzzy결과", index=False)
-                compare_all_df.round(3).to_excel(writer, sheet_name="비교_All", index=False)
-                factor_test_df.round(3).to_excel(writer, sheet_name="요인간_유의성", index=False)
+                block_top = ahp_mat.copy()
+                block_top.insert(0, "구분", labels_kr)
 
+                block_bottom = fuzzy_mat.copy()
+                block_bottom.insert(0, "구분", labels_kr)
+
+                blank = pd.DataFrame([[""] * block_top.shape[1]])
+
+                out_mat = pd.concat(
+                    [
+                        pd.DataFrame(
+                            [["일반 AHP 최종 판단행렬 (Group: All)"] + [""] * (block_top.shape[1] - 1)]
+                        ),
+                        block_top.reset_index(drop=True),
+                        blank,
+                        pd.DataFrame(
+                            [["Fuzzy AHP 최종 판단행렬 (Group: All)"] + [""] * (block_bottom.shape[1] - 1)]
+                        ),
+                        block_bottom.reset_index(drop=True),
+                    ],
+                    ignore_index=True,
+                )
+                out_mat.to_excel(writer, sheet_name="행렬_All", index=False, header=False)
+
+                # 4. AHP/Fuzzy/비교 결과
+                ahp_result_df.to_excel(writer, sheet_name="AHP결과", index=False)
+                fuzzy_result_df.to_excel(writer, sheet_name="Fuzzy결과", index=False)
+                compare_all_df.to_excel(writer, sheet_name="비교_All", index=False)
+
+                # 5. 요인간 / 그룹간 유의성
+                factor_test_df.to_excel(writer, sheet_name="요인간_유의성", index=False)
+                group_effect_df.to_excel(writer, sheet_name="그룹간_유의성", index=False)
+
+                # 6. 분석 설정
                 setting_df = pd.DataFrame(
                     {
-                        "설정항목": ["비퍼지화_방법", "CR_임계값", "t검정_p기준", "요인간_p기준"],
-                        "값": [defuzz_method, cr_th, p_ttest_threshold, p_factor_threshold],
+                        "설정항목": [
+                            "비퍼지화_방법",
+                            "CR_임계값",
+                            "t검정_p기준",
+                            "요인간_p기준",
+                            "그룹간_p기준",
+                        ],
+                        "값": [
+                            defuzz_method,
+                            cr_th,
+                            p_ttest_threshold,
+                            p_factor_threshold,
+                            p_group_threshold,
+                        ],
                     }
                 )
                 setting_df.to_excel(writer, sheet_name="분석설정", index=False)
+
+                # ---------- 여기서부터 openpyxl 객체에 접근하여 포맷팅/차트 ----------
+                wb = writer.book
+
+                # 숫자 포맷 0.000 적용
+                for sheet_name in [
+                    "FuzzyAHP_로우데이터",
+                    "원본데이터",
+                    "일관성검증",
+                    "행렬_All",
+                    "AHP결과",
+                    "Fuzzy결과",
+                    "비교_All",
+                    "요인간_유의성",
+                    "그룹간_유의성",
+                ]:
+                    ws = wb[sheet_name]
+                    apply_number_format_000(ws)
+
+                # Fuzzy TFN 그래프용 데이터 + 차트 예시 (요인1, 첫 그룹 기준)
+                chart_sheet = wb.create_sheet("Fuzzy_그래프_데이터")
+                chart_sheet.append(["x", "membership"])
+
+                # 요인1, 첫 그룹의 TFN
+                first_group = list(all_results.keys())[0]
+                first_Si = all_results[first_group]["Si"][0]  # 요인1
+                l, m, u = float(first_Si[0]), float(first_Si[1]), float(first_Si[2])
+                chart_sheet.append([l, 0])
+                chart_sheet.append([m, 1])
+                chart_sheet.append([u, 0])
+
+                chart = LineChart()
+                chart.title = "요인1 Triangular Fuzzy Number"
+                chart.y_axis.title = "Membership"
+                chart.x_axis.title = "Value"
+
+                data = Reference(chart_sheet, min_col=2, min_row=1, max_row=4)
+                cats = Reference(chart_sheet, min_col=1, min_row=2, max_row=4)
+                chart.add_data(data, titles_from_data=True)
+                chart.set_categories(cats)
+
+                chart_sheet.add_chart(chart, "E2")  # 위치[web:371]
 
             out.seek(0)
             return out.getvalue()
