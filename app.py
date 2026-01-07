@@ -5,10 +5,23 @@ import matplotlib.pyplot as plt
 from scipy import linalg, stats
 import io
 import warnings
+from datetime import datetime  # 최근 로그인 일자 표시용
 
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
+
+# -----------------------------
+# 0. 세션 상태 초기화 (로그인 관련)
+# -----------------------------
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "last_login" not in st.session_state:
+    st.session_state.last_login = "로그인 이력 없음"
+
+# 고정 계정 정보
+VALID_ID = "shjeon"
+VALID_PW = "@jsh2143033"
 
 # -----------------------------
 # 1. 기본 상수
@@ -286,7 +299,41 @@ def test_factor_significance(weights_matrix, alpha=0.05):
 
 
 # -----------------------------
-# 6. Streamlit UI
+# 6. 로그인 UI (사이드바 맨 위)
+# -----------------------------
+with st.sidebar:
+    st.subheader("🔐 로그인")
+
+    # 이미 로그인된 상태면 정보만 표시
+    if st.session_state.logged_in:
+        st.success(f"로그인 완료: {VALID_ID}")
+        st.write(f"최근 로그인 일자: {st.session_state.last_login}")
+        if st.button("로그아웃"):
+            st.session_state.logged_in = False
+            st.experimental_rerun()
+    else:
+        login_id = st.text_input("아이디", value="", key="login_id")
+        login_pw = st.text_input("비밀번호", value="", type="password", key="login_pw")
+        if st.button("로그인"):
+            if (login_id == VALID_ID) and (login_pw == VALID_PW):
+                st.session_state.logged_in = True
+                # 최근 로그인 일자 저장 (YYYY-MM-DD HH:MM 형식)
+                st.session_state.last_login = datetime.now().strftime("%Y-%m-%d %H:%M")
+                st.success("로그인 성공")
+                st.experimental_rerun()
+            else:
+                st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
+
+        st.write(f"최근 로그인 일자: {st.session_state.last_login}")
+
+# 로그인하지 않은 경우, 메인 화면 차단
+if not st.session_state.logged_in:
+    st.title("📊 Fuzzy AHP 분석 시스템")
+    st.warning("좌측 로그인 후에만 분석 기능을 사용할 수 있습니다.")
+    st.stop()
+
+# -----------------------------
+# 7. (이하부터는 로그인 후에만 보이는 메인 분석 UI)
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
 st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (Geometric Mean Method + 개선된 Chang Extent + 통계 검정).")
@@ -639,7 +686,6 @@ if st.button("🚀 분석 시작", type="primary"):
         st.markdown("### 💾 분석 결과 엑셀 저장 (로우 데이터 포함)")
 
         buffer = io.BytesIO()
-        # engine 지정 제거 → 기본 엔진(openpyxl 등) 사용
         with pd.ExcelWriter(buffer) as writer:
             df.to_excel(writer, sheet_name="원본데이터", index=False)
             cons_df.to_excel(writer, sheet_name="일관성검증", index=False)
@@ -757,6 +803,7 @@ if st.button("🚀 분석 시작", type="primary"):
                     "요인 라벨(한글)",
                     "요인 라벨(영문)",
                     "업로드 파일 시트명",
+                    "최근 로그인 일자",
                 ],
                 "값": [
                     defuzz_disp,
@@ -770,6 +817,7 @@ if st.button("🚀 분석 시작", type="primary"):
                     ", ".join(labels_kr),
                     ", ".join(labels_en),
                     first_sheet_name,
+                    st.session_state.last_login,
                 ],
             }
             config_df = pd.DataFrame(config_data)
