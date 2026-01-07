@@ -233,7 +233,7 @@ def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
 
 
 # -----------------------------
-# 5. 요인간 / 그룹간 통계 검정 함수
+# 5. 통계 검정 함수 (요인/그룹)
 # -----------------------------
 def test_factor_significance(weights_matrix, p_threshold=0.05):
     n_experts, n_factors = weights_matrix.shape
@@ -248,11 +248,11 @@ def test_factor_significance(weights_matrix, p_threshold=0.05):
         }
 
     if n_factors == 2:
-        stat, pval = stats.ttest_rel(weights_matrix[:, 0], weights_matrix[:, 1])  # paired t[web:343]
+        stat, pval = stats.ttest_rel(weights_matrix[:, 0], weights_matrix[:, 1])
         method = "paired_t_test"
     else:
         args = [weights_matrix[:, j] for j in range(n_factors)]
-        stat, pval = stats.friedmanchisquare(*args)  # Friedman[web:148]
+        stat, pval = stats.friedmanchisquare(*args)
         method = "friedman_test"
 
     return {
@@ -267,7 +267,6 @@ def test_factor_significance(weights_matrix, p_threshold=0.05):
 
 
 def test_group_significance(all_results, groups, labels_kr, p_threshold=0.05):
-    """그룹별 fuzzy weight를 이용해 요인별 그룹간 차이 검정 (단순 일원 ANOVA 예시)."""
     rows = []
     if len(groups) < 2:
         return pd.DataFrame(
@@ -279,8 +278,7 @@ def test_group_significance(all_results, groups, labels_kr, p_threshold=0.05):
         samples = []
         for g in groups:
             w = all_results[g]["w_fuzzy"][fi]
-            samples.append(w)  # 각 그룹에서 하나씩이라 자유도는 낮지만 참고용
-        # 단순 f_oneway (실제론 n>1 필요하나 여기서는 형태만 구현)[web:76]
+            samples.append(w)
         try:
             stat, pval = stats.f_oneway(*[[w] for w in samples])
         except Exception:
@@ -299,7 +297,32 @@ def test_group_significance(all_results, groups, labels_kr, p_threshold=0.05):
 
 
 # -----------------------------
-# 6. 로그인 UI
+# 6. 삼각 퍼지 멤버십 함수 (그래프용)
+# -----------------------------
+def triangular_membership(x, a, b, c):
+    """표준 삼각 퍼지 멤버십 함수 a <= b <= c 가 되도록 정렬."""
+    a, b, c = sorted([a, b, c])
+    y = np.zeros_like(x, dtype=float)
+
+    if c == a:
+        return y
+
+    if b > a:
+        idx = (x > a) & (x < b)
+        y[idx] = (x[idx] - a) / (b - a)
+
+    y[(x == b)] = 1.0
+
+    if c > b:
+        idx = (x > b) & (x < c)
+        y[idx] = (c - x[idx]) / (c - b)
+
+    y[(x <= a) | (x >= c)] = 0.0
+    return y
+
+
+# -----------------------------
+# 7. 로그인 UI
 # -----------------------------
 with st.sidebar:
     st.subheader("🔐 로그인")
@@ -327,7 +350,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # -----------------------------
-# 7. 메인 UI
+# 8. 메인 UI
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
 st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구.")
@@ -342,7 +365,6 @@ with st.sidebar:
     ]
     defuzz_disp = st.selectbox("비퍼지화 방법 (Si 비퍼지화)", options)
     defuzz_map = {
-        "기하평균 ((l×m×u)^(1/3)": "geometric",   # 오타 방지
         "기하평균 ((l×m×u)^(1/3))": "geometric",
         "산술평균 ((l+m+u)/3)": "arithmetic",
         "가중평균 ((l+2m+u)/4)": "weighted",
@@ -360,7 +382,9 @@ with st.sidebar:
         "그룹간 유의성 기준 p-value", 0.0, 1.0, 0.05, 0.01, format="%.2f"
     )
 
-# 샘플 파일
+# -----------------------------
+# 9. 샘플 & 업로드
+# -----------------------------
 st.markdown("### 📥 샘플 데이터 (1_2 형식 예시)")
 sample_df = pd.DataFrame(
     {
@@ -384,7 +408,6 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
-# 데이터 업로드
 st.markdown("### 📤 데이터 업로드")
 file = st.file_uploader("Excel 파일을 업로드하세요", type=["xlsx", "xls"])
 
@@ -392,8 +415,12 @@ if not file:
     st.info("👆 Excel 파일을 업로드하면 분석을 시작할 수 있습니다.")
     st.stop()
 
-df = pd.read_excel(file)
-st.success(f"파일 업로드 완료: {len(df)}행")
+# 업로드한 엑셀의 시트명 가져오기 (첫 시트 기준) [web:409]
+excel_file = pd.ExcelFile(file)
+sheet_name_used = excel_file.sheet_names[0]
+df = pd.read_excel(excel_file, sheet_name=sheet_name_used)
+
+st.success(f"파일 업로드 완료: {len(df)}행 (시트명: {sheet_name_used})")
 with st.expander("📋 데이터 미리보기"):
     st.dataframe(df.head())
 
@@ -419,11 +446,14 @@ else:
 has_group = df[type_col].notna().any()
 groups = df[type_col].dropna().unique() if has_group else ["All"]
 
+# -----------------------------
+# 10. 분석 실행
+# -----------------------------
 if st.button("🚀 분석 시작", type="primary"):
     all_results = {}
     cons_list = []
     factor_tests = []
-    fuzzy_raw_rows = []   # 응답자별 FuzzyAHP 로우데이터
+    fuzzy_raw_rows = []
     ahp_result_rows = []
     fuzzy_result_rows = []
     compare_all_rows = []
@@ -578,27 +608,24 @@ if st.button("🚀 분석 시작", type="primary"):
             st.subheader("Fuzzy AHP 최종 판단행렬")
             st.dataframe(style3(fuzzy_mat_df), use_container_width=True)
 
-            # 삼각퍼지 그래프 (Si) 표시
+            # ---- 삼각퍼지 그래프 (수정 버전) ----
             st.subheader("삼각퍼지 그래프 (Si Triangular Fuzzy Numbers)")
             Si = r["Si"]
             for fi, lab in enumerate(labels_kr):
                 l, m, u = Si[fi]
-                x = np.linspace(l, u, 100)
-                if u == l:
-                    y = np.zeros_like(x)
-                else:
-                    y = np.piecewise(
-                        x,
-                        [x <= l, (x > l) & (x <= m), (x > m) & (x <= u), x > u],
-                        [0,
-                         lambda x: (x - l) / (m - l) if m != l else 0,
-                         lambda x: (u - x) / (u - m) if u != m else 0,
-                         0],
-                    )
+                a, b, c = sorted([float(l), float(m), float(u)])
+                if c == a:
+                    continue
+                x = np.linspace(a, c, 200)
+                y = triangular_membership(x, a, b, c)
+
                 fig, ax = plt.subplots()
-                ax.plot(x, y)
+                ax.plot(x, y, label=f"{lab}")
                 ax.set_title(f"{lab} (Group: {g})")
+                ax.set_xlabel("Value")
+                ax.set_ylabel("Membership")
                 ax.set_ylim(0, 1.05)
+                ax.grid(True, alpha=0.3)
                 st.pyplot(fig)
 
     with tabs[2]:
@@ -647,11 +674,10 @@ if st.button("🚀 분석 시작", type="primary"):
         st.markdown("### 📊 분석 결과 엑셀 저장")
 
         def apply_number_format_000(ws):
-            """엑셀 워크시트에서 숫자 셀에 0.000 포맷 적용 (값 자체는 그대로 유지)."""
             for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
                 for cell in row:
                     if isinstance(cell.value, (int, float)):
-                        cell.number_format = "0.000"  # 표시만 소수점 3자리[web:382]
+                        cell.number_format = "0.000"
 
         def create_excel_report():
             out = io.BytesIO()
@@ -723,10 +749,9 @@ if st.button("🚀 분석 시작", type="primary"):
                 )
                 setting_df.to_excel(writer, sheet_name="분석설정", index=False)
 
-                # ---------- 여기서부터 openpyxl 객체에 접근하여 포맷팅/차트 ----------
+                # ---------- openpyxl 객체에 접근하여 포맷팅/차트 ----------
                 wb = writer.book
 
-                # 숫자 포맷 0.000 적용
                 for sheet_name in [
                     "FuzzyAHP_로우데이터",
                     "원본데이터",
@@ -741,17 +766,17 @@ if st.button("🚀 분석 시작", type="primary"):
                     ws = wb[sheet_name]
                     apply_number_format_000(ws)
 
-                # Fuzzy TFN 그래프용 데이터 + 차트 예시 (요인1, 첫 그룹 기준)
-                chart_sheet = wb.create_sheet("Fuzzy_그래프_데이터")
+                # Fuzzy TFN 그래프용 데이터 + 차트 시트 수정
+                chart_sheet = wb.create_sheet("Fuzzy_그래프_시트")
                 chart_sheet.append(["x", "membership"])
 
-                # 요인1, 첫 그룹의 TFN
                 first_group = list(all_results.keys())[0]
                 first_Si = all_results[first_group]["Si"][0]  # 요인1
                 l, m, u = float(first_Si[0]), float(first_Si[1]), float(first_Si[2])
-                chart_sheet.append([l, 0])
-                chart_sheet.append([m, 1])
-                chart_sheet.append([u, 0])
+                a, b, c = sorted([l, m, u])
+                chart_sheet.append([a, 0])
+                chart_sheet.append([b, 1])
+                chart_sheet.append([c, 0])
 
                 chart = LineChart()
                 chart.title = "요인1 Triangular Fuzzy Number"
@@ -762,17 +787,18 @@ if st.button("🚀 분석 시작", type="primary"):
                 cats = Reference(chart_sheet, min_col=1, min_row=2, max_row=4)
                 chart.add_data(data, titles_from_data=True)
                 chart.set_categories(cats)
-
-                chart_sheet.add_chart(chart, "E2")  # 위치[web:371]
+                chart_sheet.add_chart(chart, "E2")
 
             out.seek(0)
             return out.getvalue()
 
         excel_bytes = create_excel_report()
+        # 결과 파일명에 시트명 포함
+        out_name = f"{sheet_name_used}_FAHP_분석결과_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         st.download_button(
             "📥 분석 결과 다운로드 (Excel)",
             data=excel_bytes,
-            file_name=f"Fuzzy_AHP_분석결과_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            file_name=out_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
         )
