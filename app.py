@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import font_manager, rcParams
-from scipy import linalg
+from matplotlib import rcParams
+from scipy import linalg, stats
 import io
 import warnings
 
@@ -12,12 +12,12 @@ warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
 
 # -----------------------------
-# 0. 그래프용 한글 폰트 도우미
+# 0. 시각화 한글 폰트: 그래프에만 적용
 # -----------------------------
 def enable_korean_for_axes(ax):
     """
     이 함수가 호출된 축(ax)에 한글 폰트를 적용.
-    - Windows 에서는 'Malgun Gothic' 사용.
+    - Windows 에서는 'Malgun Gothic' 사용을 시도.
     - 폰트가 없으면 기본 폰트 그대로 사용.
     """
     try:
@@ -31,7 +31,6 @@ def enable_korean_for_axes(ax):
             for text in leg.get_texts():
                 text.set_fontfamily("Malgun Gothic")
     except Exception:
-        # 폰트가 없더라도 앱이 죽지 않도록 무시
         pass
     rcParams["axes.unicode_minus"] = False
 
@@ -268,7 +267,7 @@ def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
 # 5. Streamlit UI
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
-st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (개선된 Chang Extent + 최소 CR 보정).")
+st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (개선된 Chang Extent + 최소 CR 보정 + t-검정).")
 
 with st.sidebar:
     st.header("⚙️ 분석 옵션")
@@ -289,6 +288,7 @@ with st.sidebar:
     cr_th = st.slider("CR 허용 임계값", 0.0, 0.2, 0.1, 0.01)
     alpha = st.slider("CR 보정 강도 (alpha)", 0.1, 0.5, 0.3, 0.05)
     max_iter = st.slider("CR 최대 보정 횟수", 1, 30, 20, 1)
+    alpha_t = st.slider("t-검정 유의수준 (α)", 0.01, 0.20, 0.05, 0.01)
 
 # --- 샘플 데이터 (1_2 형식 예시) ---
 st.markdown("### 📥 샘플 데이터 (1_2 형식 예시)")
@@ -402,7 +402,9 @@ if st.button("🚀 분석 시작", type="primary"):
 
     st.success("분석 완료")
 
-    tabs = st.tabs(["일관성 검증", "AHP 행렬", "비교 분석", "Fuzzy 상세", "시각화"])
+    tabs = st.tabs(
+        ["일관성 검증", "AHP 행렬", "비교 분석", "Fuzzy 상세", "시각화", "t-검정"]
+    )
 
     # 1) 일관성
     with tabs[0]:
@@ -496,7 +498,6 @@ if st.button("🚀 분석 시작", type="primary"):
             st.markdown(f"#### 그룹: {g}")
             Si = r["Si"]
 
-            # (1) Fuzzy Membership Functions
             fig, ax = plt.subplots(figsize=(10, 5))
             colors = plt.cm.Set3(np.linspace(0, 1, len(labels)))
             for i, lab in enumerate(labels):
@@ -507,10 +508,9 @@ if st.button("🚀 분석 시작", type="primary"):
             ax.set_title("Fuzzy Membership Functions")
             ax.grid(True, alpha=0.3)
             ax.legend()
-            enable_korean_for_axes(ax)   # ➜ 그래프에만 한글 폰트 적용
+            enable_korean_for_axes(ax)
             st.pyplot(fig)
 
-            # (2) AHP vs Fuzzy 비교 막대그래프
             fig2, ax2 = plt.subplots(figsize=(8, 4))
             x = np.arange(len(labels))
             w1 = r["ahp_w"]
@@ -523,5 +523,39 @@ if st.button("🚀 분석 시작", type="primary"):
             ax2.set_title("AHP vs Fuzzy AHP Weights")
             ax2.grid(True, axis="y", alpha=0.3)
             ax2.legend()
-            enable_korean_for_axes(ax2)  # ➜ 이 그래프에도 한글 폰트 적용
+            enable_korean_for_axes(ax2)
             st.pyplot(fig2)
+
+    # 6) t-검정 (AHP vs Fuzzy)
+    with tabs[5]:
+        st.markdown("### 🔎 요인별 AHP vs Fuzzy t-검정 (대응표본)")
+        st.write(
+            f"각 요인에 대해 AHP 가중치와 Fuzzy 가중치 간 차이를 대응표본 t-test(ttest_rel)로 검정하고, 선택한 유의수준 α={alpha_t:.2f} 기준으로 결과를 제시합니다."
+        )
+
+        ttest_rows = []
+        for g, r in all_results.items():
+            w_ahp = r["ahp_w"]
+            w_fuzzy = r["w_fuzzy"]
+            # 두 벡터는 같은 요인에 대한 쌍이므로 대응표본 t검정 수행 [web:57][web:66]
+            t_stat, p_val = stats.ttest_rel(w_ahp, w_fuzzy)
+            sig = "유의" if p_val < alpha_t else "비유의"
+            ttest_rows.append(
+                {
+                    "그룹": g,
+                    "t-통계량": t_stat,
+                    "p-value": p_val,
+                    f"판정 (α={alpha_t:.2f})": sig,
+                }
+            )
+
+        ttest_df = pd.DataFrame(ttest_rows)
+        st.dataframe(
+            ttest_df.style.format({"t-통계량": "{:.4f}", "p-value": "{:.4f}"}),
+            use_container_width=True,
+        )
+
+        st.caption(
+            "가설: H0 - AHP 가중치와 Fuzzy 가중치의 평균 차이는 0이다. "
+            "H1 - 두 가중치의 평균이 서로 다르다(양측 검정).[web:57][web:62][web:66]"
+        )
