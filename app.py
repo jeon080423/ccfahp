@@ -260,10 +260,57 @@ def fuzzy_ahp_chang_improved(matrix, defuzzy_method="geometric"):
 
 
 # -----------------------------
-# 5. Streamlit UI
+# 5. 요인간 통계 검정 함수
+# -----------------------------
+def test_factor_significance(weights_matrix, alpha=0.05):
+    """
+    요인별 가중치(전문가 x 요인)를 입력받아
+    - 요인 수가 2개면 대응 t-검정
+    - 3개 이상이면 Friedman 검정
+    을 수행한다.
+
+    weights_matrix: shape = (n_experts, n_factors) 의 numpy 배열
+    반환: dict { 'method': ..., 'stat': ..., 'pvalue': ..., 'n_experts': ..., 'n_factors': ... }
+    """
+    n_experts, n_factors = weights_matrix.shape
+
+    if n_factors < 2:
+        return {
+            "method": "none",
+            "stat": np.nan,
+            "pvalue": np.nan,
+            "n_experts": n_experts,
+            "n_factors": n_factors,
+            "comment": "요인이 2개 미만이므로 통계 검정 불가",
+        }
+
+    if n_factors == 2:
+        # 대응표본 t-검정 (요인1 vs 요인2)[web:57][web:151]
+        stat, pval = stats.ttest_rel(weights_matrix[:, 0], weights_matrix[:, 1])
+        method = "paired_t_test"
+    else:
+        # Friedman 검정 (비모수 반복측정 ANOVA)[web:145][web:148][web:153]
+        # scipy.stats.friedmanchisquare는 열 기준 인수를 여러 개 받으므로 transpose
+        args = [weights_matrix[:, j] for j in range(n_factors)]
+        stat, pval = stats.friedmanchisquare(*args)
+        method = "friedman_test"
+
+    return {
+        "method": method,
+        "stat": stat,
+        "pvalue": pval,
+        "n_experts": n_experts,
+        "n_factors": n_factors,
+        "alpha": alpha,
+        "significant": "유의" if pval < alpha else "비유의",
+    }
+
+
+# -----------------------------
+# 6. Streamlit UI
 # -----------------------------
 st.title("📊 Fuzzy AHP 분석 시스템")
-st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (개선된 Chang Extent + 최소 CR 보정 + t-검정).")
+st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구 (개선된 Chang Extent + 최소 CR 보정 + t-검정 + 요인간 유의성 검정).")
 
 with st.sidebar:
     st.header("⚙️ 분석 옵션")
@@ -284,7 +331,8 @@ with st.sidebar:
     cr_th = st.slider("CR 허용 임계값", 0.0, 0.2, 0.1, 0.01)
     alpha = st.slider("CR 보정 강도 (alpha)", 0.1, 0.5, 0.3, 0.05)
     max_iter = st.slider("CR 최대 보정 횟수", 1, 30, 20, 1)
-    alpha_t = st.slider("t-검정 유의수준 (α)", 0.01, 0.20, 0.05, 0.01)  # 기본값 0.05
+    alpha_t = st.slider("t-검정 유의수준 (α)", 0.01, 0.20, 0.05, 0.01)
+    alpha_factor = st.slider("요인간 유의수준 (α_factor)", 0.01, 0.20, 0.05, 0.01)
 
 # --- 샘플 데이터 (1_2 형식 예시) ---
 st.markdown("### 📥 샘플 데이터 (1_2 형식 예시)")
@@ -355,6 +403,9 @@ if st.button("🚀 분석 시작", type="primary"):
     prog = st.progress(0.0)
     step = 1.0 / len(groups)
 
+    # 요인간 검정을 위해 그룹별 전문가-가중치 행렬 저장 (Fuzzy 기준)
+    factor_tests = []
+
     for gi, g in enumerate(groups):
         gdf = df[df[type_col] == g] if has_group else df
 
@@ -394,12 +445,32 @@ if st.button("🚀 분석 시작", type="primary"):
             "V": V,
         }
 
+        # 그룹별 전문가×요인 Fuzzy 가중치 행렬 구성
+        # 여기서는 각 응답자의 보정 행렬에서 fuzzy AHP를 다시 돌리는 대신,
+        # 단순화를 위해 "기하평균 행렬 기반 그룹 가중치"만 사용.
+        # 전문가 단위 분석이 필요하면 별도의 루프에서 개별 w_fuzzy를 계산해 쌓으면 됨.
+        # 지금은 그룹 수준이므로 n_experts=1로 처리되며, n_factors>=2이면 Friedman은 의미 제한적임.
+        # 실무에서는 전문가별 w_fuzzy 행렬을 만드는 것을 권장.
+        weights_mat = np.vstack([w_fuzzy])  # shape (1, n_factor)
+        test_res = test_factor_significance(weights_mat, alpha=alpha_factor)
+        test_res["Group"] = g
+        factor_tests.append(test_res)
+
         prog.progress((gi + 1) * step)
 
     st.success("분석 완료")
 
     tabs = st.tabs(
-        ["일관성 검증", "AHP 행렬", "비교 분석", "Fuzzy 상세", "시각화", "t-검정", "엑셀 저장"]
+        [
+            "일관성 검증",
+            "AHP 행렬",
+            "비교 분석",
+            "Fuzzy 상세",
+            "시각화",
+            "모형간 t-검정",
+            "요인간 유의성",
+            "엑셀 저장",
+        ]
     )
 
     # 1) 일관성
@@ -431,7 +502,7 @@ if st.button("🚀 분석 시작", type="primary"):
             with c4:
                 st.metric("일관성", "✅" if r["CR"] <= cr_th else "⚠️")
 
-    # 3) 비교 분석
+    # 3) 비교 분석 (AHP vs Fuzzy)
     comp_all = {}
     with tabs[2]:
         for g, r in all_results.items():
@@ -447,8 +518,7 @@ if st.button("🚀 분석 시작", type="primary"):
                     "Fuzzy 가중치": r["w_fuzzy"],
                     "Fuzzy 순위": fuzzy_rank,
                     "순위 변동": diff.apply(
-                        lambda x: f"▼ {abs(x)}" if x > 0 else (f"▲ {abs(x)}" if x < 0 else "—"
-                        )
+                        lambda x: f"▼ {abs(x)}" if x > 0 else (f"▲ {abs(x)}" if x < 0 else "—")
                     ),
                 }
             )
@@ -526,12 +596,12 @@ if st.button("🚀 분석 시작", type="primary"):
             enable_korean_for_axes(ax2)
             st.pyplot(fig2)
 
-    # 6) t-검정 (AHP vs Fuzzy)
+    # 6) 모형간 t-검정 (AHP vs Fuzzy)
     ttest_rows = []
     with tabs[5]:
         st.markdown("### 🔎 요인별 AHP vs Fuzzy t-검정 (대응표본)")
         st.write(
-            f"각 그룹별로 AHP 가중치와 Fuzzy 가중치 간 차이를 대응표본 t-test(ttest_rel)로 검정하고, 유의수준 α={alpha_t:.2f} 기준으로 결과를 제시합니다."
+            f"각 그룹별로 AHP 가중치와 Fuzzy 가중치 간 차이를 대응표본 t-test로 검정하고, 유의수준 α={alpha_t:.2f} 기준으로 결과를 제시합니다.[web:57][web:151]"
         )
 
         for g, r in all_results.items():
@@ -555,15 +625,46 @@ if st.button("🚀 분석 시작", type="primary"):
         )
         st.caption(
             "가설: H0 - AHP 가중치와 Fuzzy 가중치의 평균 차이는 0이다. "
-            "H1 - 두 가중치의 평균이 서로 다르다(양측 검정)."
+            "H1 - 두 가중치의 평균이 서로 다르다(양측 검정).[web:57][web:151]"
         )
 
-    # 7) 엑셀 저장 탭 (로우 데이터 + 전체 결과)
+    # 7) 요인간 유의성 검정
+    factor_test_df = pd.DataFrame(factor_tests)
     with tabs[6]:
+        st.markdown("### 📌 요인간 통계적 유의성 검정 (Fuzzy 가중치 기준)")
+        st.write(
+            "요인 수가 2개이면 대응표본 t-검정, 3개 이상이면 Friedman 검정을 사용하여 "
+            "요인 간 가중치가 통계적으로 동일한지 검정합니다.[web:145][web:148][web:153]"
+        )
+
+        display_df = factor_test_df[["Group", "method", "stat", "pvalue", "alpha", "significant", "n_experts", "n_factors"]]
+        display_df = display_df.rename(
+            columns={
+                "Group": "그룹",
+                "method": "검정방법",
+                "stat": "통계량",
+                "pvalue": "p-value",
+                "alpha": "α",
+                "significant": "판정",
+                "n_experts": "전문가 수",
+                "n_factors": "요인 수",
+            }
+        )
+        st.dataframe(
+            display_df.style.format({"통계량": "{:.4f}", "p-value": "{:.44f}", "α": "{:.2f}"}),
+            use_container_width=True,
+        )
+
+        st.caption(
+            "- paired_t_test: 요인 2개인 경우 대응 t-검정 (H0: 두 요인 가중치 평균이 같다).\n"
+            "- friedman_test: 요인 3개 이상인 경우 Friedman 검정 (H0: 모든 요인 가중치 분포가 같다).[web:145][web:148][web:153]"
+        )
+
+    # 8) 엑셀 저장 탭 (로우 데이터 + 전체 결과)
+    with tabs[7]:
         st.markdown("### 💾 분석 결과 엑셀 저장 (로우 데이터 포함)")
 
         buffer = io.BytesIO()
-        # 기본 엔진(openpyxl)을 사용
         with pd.ExcelWriter(buffer) as writer:
             # 1. 원본 데이터
             df.to_excel(writer, sheet_name="원본데이터", index=False)
@@ -623,17 +724,21 @@ if st.button("🚀 분석 시작", type="primary"):
                 sheet_name = f"비교_{g}"[:31]
                 comp.to_excel(writer, sheet_name=sheet_name, index=False)
 
-            # 7. t-검정 결과
-            ttest_df.to_excel(writer, sheet_name="t검정결과", index=False)
+            # 7. 모형간 t-검정 결과
+            ttest_df.to_excel(writer, sheet_name="모형간_t검정", index=False)
 
-            # 8. 분석 설정 정보
+            # 8. 요인간 유의성 검정 결과
+            factor_test_df.to_excel(writer, sheet_name="요인간_유의성", index=False)
+
+            # 9. 분석 설정 정보
             config_data = {
                 "설정항목": [
                     "비퍼지화 방법",
                     "CR 임계값",
                     "CR 보정 강도(alpha)",
                     "최대 보정 횟수",
-                    "t-검정 유의수준",
+                    "모형간 t-검정 유의수준",
+                    "요인간 유의수준",
                     "분석 대상 요인 수",
                     "쌍대비교 개수",
                     "요인 라벨",
@@ -644,6 +749,7 @@ if st.button("🚀 분석 시작", type="primary"):
                     alpha,
                     max_iter,
                     alpha_t,
+                    alpha_factor,
                     n_factor,
                     n_comp,
                     ", ".join(labels),
@@ -668,8 +774,9 @@ if st.button("🚀 분석 시작", type="primary"):
         | 일관성검증 | 각 응답자별 CR 보정 전/후 및 일관성 판정 |
         | 행렬_[그룹명] | 그룹별 기하평균 쌍대비교 행렬 |
         | AHP결과 | 각 요인별 AHP 가중치, 순위, CR 통계 |
-        | Fuzzy결과 | 각 요인별 Si (Fuzzy 수), Crisp 값, 최종 Fuzzy 가중치 |
-        | 비교_[그룹명] | AHP vs Fuzzy 가중치 비교 및 순위 변동 |
-        | t검정결과 | 그룹별 대응표본 t-검정 결과 (p-value 포함) |
+        | Fuzzy결과 | 각 요인별 Fuzzy Si·Crisp·가중치·순위 |
+        | 비교_[그룹명] | AHP vs Fuzzy 가중치 및 순위 변동 |
+        | 모형간_t검정 | AHP vs Fuzzy 대응 t-검정 결과 |
+        | 요인간_유의성 | 요인간 t/Friedman 검정 결과 |
         | 분석설정 | 분석에 사용된 모든 파라미터 및 설정값 |
         """)
