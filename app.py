@@ -24,6 +24,12 @@ if "logged_in" not in st.session_state:
 if "last_login" not in st.session_state:
     st.session_state.last_login = "로그인 이력 없음"
 
+# 분석 결과 보관용 세션 변수
+if "all_results" not in st.session_state:
+    st.session_state.all_results = None
+if "labels_kr" not in st.session_state:
+    st.session_state.labels_kr = None
+
 VALID_ID = "shjeon"
 VALID_PW = "@jsh2143033"
 
@@ -252,7 +258,6 @@ def test_factor_significance(weights_matrix, p_threshold=0.05):
     if n_factors == 2:
         stat, pval = stats.ttest_rel(weights_matrix[:, 0], weights_matrix[:, 1])
         method = "paired_t_test"
-        # F 검정이나 분산 분석으로 대체 가능[web:445]
     else:
         args = [weights_matrix[:, j] for j in range(n_factors)]
         stat, pval = stats.friedmanchisquare(*args)
@@ -327,13 +332,6 @@ def triangular_membership(x, a, b, c):
 # 7. 행렬_All 시트 출력 함수 (일반AHP + 퍼지AHP)
 # -----------------------------
 def export_to_excel_with_formatting(all_results, labels_kr):
-    """
-    all_results['All']['ahp_matrix'], all_results['All']['fuzzy_matrix']를
-    '행렬_All' 통합 워크북으로 생성.
-    - 가로/세로 레이블: 요인1, 요인2 ...
-    - 대각선: 1 (정수), 회색 음영
-    - 나머지: 소수점 3자리
-    """
     wb = Workbook()
     if 'Sheet' in wb.sheetnames:
         wb.remove(wb['Sheet'])
@@ -348,10 +346,8 @@ def export_to_excel_with_formatting(all_results, labels_kr):
         bottom=Side(style='thin')
     )
 
-    # ---------- 7-1. 일반 AHP ----------
+    # ---------- 일반 AHP ----------
     ws_ahp = wb.create_sheet("일반AHP_행렬")
-
-    # 헤더
     ws_ahp.append([''] + labels_kr)
 
     for i in range(n_factors):
@@ -364,7 +360,6 @@ def export_to_excel_with_formatting(all_results, labels_kr):
                 row_data.append(round(val, 3))
         ws_ahp.append(row_data)
 
-    # 서식 적용
     for col in range(1, n_factors + 2):
         cell = ws_ahp.cell(row=1, column=col)
         cell.font = Font(bold=True)
@@ -376,10 +371,8 @@ def export_to_excel_with_formatting(all_results, labels_kr):
             cell = ws_ahp.cell(row=row_idx, column=col_idx)
             cell.border = border
             cell.alignment = Alignment(horizontal='center', vertical='center')
-
             if col_idx == 1:
                 cell.font = Font(bold=True)
-
             if col_idx - 1 == row_idx - 2:
                 cell.fill = diagonal_fill
                 cell.number_format = '0'
@@ -391,9 +384,8 @@ def export_to_excel_with_formatting(all_results, labels_kr):
     for c in range(2, n_factors + 2):
         ws_ahp.column_dimensions[get_column_letter(c)].width = 12
 
-    # ---------- 7-2. 퍼지 AHP ----------
+    # ---------- 퍼지 AHP ----------
     ws_fuzzy = wb.create_sheet("퍼지AHP_행렬")
-
     ws_fuzzy.append([''] + labels_kr)
 
     for i in range(n_factors):
@@ -417,10 +409,8 @@ def export_to_excel_with_formatting(all_results, labels_kr):
             cell = ws_fuzzy.cell(row=row_idx, column=col_idx)
             cell.border = border
             cell.alignment = Alignment(horizontal='center', vertical='center')
-
             if col_idx == 1:
                 cell.font = Font(bold=True)
-
             if col_idx - 1 == row_idx - 2:
                 cell.fill = diagonal_fill
                 cell.number_format = '0'
@@ -432,7 +422,6 @@ def export_to_excel_with_formatting(all_results, labels_kr):
     for c in range(2, n_factors + 2):
         ws_fuzzy.column_dimensions[get_column_letter(c)].width = 12
 
-    # 메모리 버퍼에 저장해서 Streamlit에서 바로 다운로드
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -477,7 +466,6 @@ st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구.")
 
 with st.sidebar:
     st.header("⚙️ 분석 옵션")
-
     options = [
         "기하평균 ((l×m×u)^(1/3))",
         "산술평균 ((l+m+u)/3)",
@@ -485,19 +473,51 @@ with st.sidebar:
     ]
     defuzz_disp = st.selectbox("비퍼지화 방법 (Si 비퍼지화)", options)
 
-# 여기부터는 기존에 작성하신 업로드/분석/결과표 생성 코드를 그대로 이어 붙이면 된다.
-# 마지막 Excel 다운로드 버튼만 아래처럼 수정해서 사용.
+# -----------------------------
+# 10. 파일 업로드 & 분석 실행
+# -----------------------------
+st.subheader("1. 행렬_All 엑셀 업로드")
 
-# ====== 예시: 분석 완료 후 all_results, labels_kr가 준비된 상황이라고 가정 ======
-# all_results = {...}
-# labels_kr = ["요인1", "요인2", ...]  # 실제 코드에서 설정
+uploaded_file = st.file_uploader("행렬_All 파일 선택 (.xlsx)", type=["xlsx"])
 
-if 'all_results' in st.session_state and 'labels_kr' in st.session_state:
-    all_results = st.session_state['all_results']
-    labels_kr = st.session_state['labels_kr']
+if uploaded_file is not None and st.button("분석 실행"):
+    # 예시: 행렬_All 시트에서 요인 레이블과 행렬 읽기
+    xls = pd.ExcelFile(uploaded_file)
+    df = pd.read_excel(xls, sheet_name="행렬_All")  # 실제 시트명에 맞게 수정
+    labels_kr = list(df.columns[1:])               # 첫 열은 행 레이블, 나머지는 요인
+    mat = df.iloc[:, 1:].to_numpy(dtype=float)
 
-    st.subheader("📥 Excel 다운로드")
-    if st.button("행렬_All 엑셀 다운로드"):
+    # 여기서는 간단하게 전체를 한 그룹 "All"로 가정
+    w, lam, CI, CR = ahp_weights_geometric(mat)
+    Si, d, w_fuzzy, crisp_S, V = fuzzy_ahp_chang_improved(mat)
+
+    all_results = {
+        "All": {
+            "ahp_matrix": mat,
+            "fuzzy_matrix": mat,      # 필요하면 별도 퍼지 행렬로 교체
+            "w_ahp": w,
+            "w_fuzzy": w_fuzzy,
+        }
+    }
+
+    st.session_state.all_results = all_results
+    st.session_state.labels_kr = labels_kr
+    st.success("분석이 완료되었습니다.")
+
+# -----------------------------
+# 11. 결과 표시 & 엑셀 다운로드
+# -----------------------------
+if st.session_state.all_results is not None and st.session_state.labels_kr is not None:
+    all_results = st.session_state.all_results
+    labels_kr = st.session_state.labels_kr
+
+    st.subheader("2. AHP 가중치(예시)")
+    w_ahp = all_results["All"]["w_ahp"]
+    df_w = pd.DataFrame({"요인": labels_kr, "AHP 가중치": w_ahp})
+    st.dataframe(df_w)
+
+    st.subheader("3. 행렬_All 엑셀 다운로드")
+    if st.button("행렬_All 엑셀 생성"):
         bio = export_to_excel_with_formatting(all_results, labels_kr)
         st.download_button(
             label="✅ 행렬_All 다운로드",
