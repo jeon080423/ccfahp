@@ -11,11 +11,7 @@ from openpyxl.chart import LineChart, Reference
 
 warnings.filterwarnings("ignore")
 
-st.set_page_config(
-    page_title="Fuzzy AHP 분석 시스템",
-    layout="wide",
-    page_icon="duck.png"  # PNG 파일 경로 또는 파일명
-)
+st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
 
 # -----------------------------
 # 0. 세션 상태 초기화 (로그인 관련)
@@ -347,17 +343,16 @@ with st.sidebar:
         st.write(f"최근 로그인 일자: {st.session_state.last_login}")
 
 if not st.session_state.logged_in:
-st.image("duck.png", width=80)   # ← 오리 아이콘 (파일명/경로만 맞추기)
-    st.title("Fuzzy AHP 분석 시스템")
+    st.title("📊 Fuzzy AHP 분석 시스템")
     st.markdown("제작: 전상현 / jeon080423@gmail.com")
     st.warning("좌측 로그인 후에만 분석 기능을 사용할 수 있습니다.")
     st.stop()
 
 # -----------------------------
-# 8. 메인 UI
+# 8. 메인 UI  (여기만 수정)
 # -----------------------------
-st.image("duck.png", width=80)          # ← 여기, 가장 왼쪽에 두기 (if/with 안 아님)
-st.title("Fuzzy AHP 분석 시스템")       # 📊 제거
+st.image("duck.png", width=80)              # ← 제목 위 오리 아이콘
+st.title("Fuzzy AHP 분석 시스템")           # ← 앞 이모지는 제거
 st.markdown("제작: 전상현 / jeon080423@gmail.com")
 st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구.")
 
