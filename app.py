@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore")
 st.set_page_config(
     page_title="Fuzzy AHP 분석 시스템",
     layout="wide",
-    page_icon="duck.png"  # ← 업로드한 파일 이름으로 변경
+    page_icon="duck.png"  # PNG 파일 경로 또는 파일명
 )
 
 # -----------------------------
