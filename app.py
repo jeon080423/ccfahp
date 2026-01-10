@@ -347,7 +347,8 @@ with st.sidebar:
         st.write(f"최근 로그인 일자: {st.session_state.last_login}")
 
 if not st.session_state.logged_in:
-    st.title("📊 Fuzzy AHP 분석 시스템")
+st.image("duck.png", width=80)   # ← 오리 아이콘 (파일명/경로만 맞추기)
+    st.title("Fuzzy AHP 분석 시스템")
     st.markdown("제작: 전상현 / jeon080423@gmail.com")
     st.warning("좌측 로그인 후에만 분석 기능을 사용할 수 있습니다.")
     st.stop()
