@@ -11,7 +11,11 @@ from openpyxl.chart import LineChart, Reference
 
 warnings.filterwarnings("ignore")
 
-st.set_page_config(page_title="Fuzzy AHP 분석 시스템", layout="wide", page_icon="📊")
+st.set_page_config(
+    page_title="Fuzzy AHP 분석 시스템",
+    layout="wide",
+    page_icon="duck.jpg"  # ← 업로드한 파일 이름으로 변경
+)
 
 # -----------------------------
 # 0. 세션 상태 초기화 (로그인 관련)
