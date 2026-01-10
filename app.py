@@ -356,8 +356,8 @@ st.image("duck.png", width=80)   # ← 오리 아이콘 (파일명/경로만 맞
 # -----------------------------
 # 8. 메인 UI
 # -----------------------------
-st.image("duck.png", width=80)   # ← 오리 아이콘 (파일명/경로만 맞추기)
-st.title("Fuzzy AHP 분석 시스템")
+st.image("duck.png", width=80)          # ← 여기, 가장 왼쪽에 두기 (if/with 안 아님)
+st.title("Fuzzy AHP 분석 시스템")       # 📊 제거
 st.markdown("제작: 전상현 / jeon080423@gmail.com")
 st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구.")
 
