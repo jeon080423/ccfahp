@@ -349,10 +349,10 @@ if not st.session_state.logged_in:
     st.stop()
 
 # -----------------------------
-# 8. 메인 UI  (여기만 수정)
+# 8. 메인 UI
 # -----------------------------
-st.image("duck.png", width=80)              # ← 제목 위 오리 아이콘
-st.title("Fuzzy AHP 분석 시스템")           # ← 앞 이모지는 제거
+st.image("duck.png", width=80)              # 제목 위 오리 아이콘
+st.title("Fuzzy AHP 분석 시스템")
 st.markdown("제작: 전상현 / jeon080423@gmail.com")
 st.markdown("AHP와 Fuzzy AHP를 동시에 분석하는 웹 기반 도구.")
 
@@ -606,10 +606,37 @@ if st.button("🚀 분석 시작", type="primary"):
             mat_df = pd.DataFrame(r["matrix"], index=labels_kr, columns=labels_kr)
             fuzzy_mat_df = pd.DataFrame(r["fuzzy_matrix"], index=labels_kr, columns=labels_kr)
 
-            st.subheader("일반 AHP 최종 판단행렬")
-            st.dataframe(style3(mat_df), use_container_width=True)
-            st.subheader("Fuzzy AHP 최종 판단행렬")
-            st.dataframe(style3(fuzzy_mat_df), use_container_width=True)
+            # AHP 가중치 & 순위 계산
+            w_ahp = r["ahp_w"]
+            ahp_rank = pd.Series(w_ahp).rank(ascending=False, method="min").astype(int)
+            weight_rank_ahp = pd.DataFrame(
+                {
+                    "Weight": w_ahp,
+                    "Rank": ahp_rank.values,
+                },
+                index=labels_kr,
+            )
+
+            # Fuzzy 가중치 & 순위 계산
+            w_fuzzy = r["w_fuzzy"]
+            fuzzy_rank = pd.Series(w_fuzzy).rank(ascending=False, method="min").astype(int)
+            weight_rank_fuzzy = pd.DataFrame(
+                {
+                    "Weight": w_fuzzy,
+                    "Rank": fuzzy_rank.values,
+                },
+                index=labels_kr,
+            )
+
+            # 오른쪽에 붙이기
+            mat_show = pd.concat([mat_df, weight_rank_ahp], axis=1)
+            fuzzy_mat_show = pd.concat([fuzzy_mat_df, weight_rank_fuzzy], axis=1)
+
+            st.subheader("일반 AHP 최종 판단행렬 + 가중치/순위")
+            st.dataframe(style3(mat_show), use_container_width=True)
+
+            st.subheader("Fuzzy AHP 최종 판단행렬 + 가중치/순위")
+            st.dataframe(style3(fuzzy_mat_show), use_container_width=True)
 
             # ---- 삼각퍼지 그래프 (한 그래프에 모든 요인, 범례 영어) ----
             st.subheader("Triangular Fuzzy Numbers (All Factors)")
